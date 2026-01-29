@@ -16,7 +16,6 @@
     "lint": "oxlint src/",
     "format": "biome check --write src/ test/",
     "format:check": "biome check src/ test/",
-    "test": "bun test",
     "validate": "bun run typecheck && bun run lint && bun run format:check && bun test",
     "prepare": "husky"
   },

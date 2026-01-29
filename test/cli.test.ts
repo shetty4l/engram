@@ -24,7 +24,6 @@ describe("CLI database functions", () => {
   describe("getStats", () => {
     test("returns empty stats for empty database", () => {
       const stats = getStats();
-
       expect(stats.total_memories).toBe(0);
       expect(stats.categories).toEqual([]);
       expect(stats.oldest_memory).toBeNull();
