@@ -42,24 +42,27 @@ A persistent "second brain" that:
 │   Tools:                                                │
 │   - remember(content, category?) → store memory        │
 │   - recall(query, limit?) → retrieve relevant memories │
-│   - reflect() → surface conflicts for resolution       │
 │                                                         │
 │   Internal:                                             │
-│   - Embedding generation (Ollama)                      │
-│   - Similarity detection for deduplication             │
-│   - Decay scoring on access patterns                   │
+│   - Embedding generation (local transformers.js)       │
+│   - Cosine similarity for semantic search              │
+│   - FTS5 fallback for keyword search                   │
 └───────────────────────┬────────────────────────────────┘
                         │
-                        ▼
-┌────────────────────────────────────────────────────────┐
-│              SQLite Database                            │
-│              ~/.local/share/engram/engram.db           │
-│                                                         │
-│   Tables:                                               │
-│   - memories     (content, embedding, strength, etc)   │
-│   - revisions    (memory edit history)                 │
-│   - conflicts    (detected contradictions)             │
-└────────────────────────────────────────────────────────┘
+        ┌───────────────┴───────────────┐
+        │                               │
+        ▼                               ▼
+┌───────────────────┐     ┌─────────────────────────────┐
+│   HTTP Server     │     │      SQLite Database        │
+│   (localhost)     │     │  ~/.local/share/engram/     │
+│                   │     │                             │
+│ POST /remember    │     │  Tables:                    │
+│ POST /recall      │     │  - memories (content,       │
+│ GET  /health      │     │      embedding, strength)   │
+│                   │     │  - memories_fts (FTS5)      │
+│ Used by:          │     │  - metrics (usage stats)    │
+│ - OpenCode plugin │     │                             │
+└───────────────────┘     └─────────────────────────────┘
 ```
 
 ---
@@ -127,33 +130,33 @@ CREATE TABLE memories (
     -- Decay/relevance scoring
     strength REAL DEFAULT 1.0,
     
-    -- Vector for semantic search (stored as blob)
+    -- Vector for semantic search (Float32Array as blob)
     embedding BLOB
 );
 
--- Revision history for merged/edited memories
-CREATE TABLE revisions (
-    id TEXT PRIMARY KEY,
-    memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
-    old_content TEXT NOT NULL,
-    changed_at TEXT DEFAULT (datetime('now')),
-    reason TEXT  -- 'merged', 'edited', 'superseded'
+-- Full-text search index
+CREATE VIRTUAL TABLE memories_fts USING fts5(
+    content,
+    content='memories',
+    content_rowid='rowid'
 );
 
--- Flagged contradictions awaiting resolution
-CREATE TABLE conflicts (
-    id TEXT PRIMARY KEY,
-    memory_a_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
-    memory_b_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
-    flagged_at TEXT DEFAULT (datetime('now')),
-    resolved INTEGER DEFAULT 0,
-    resolution TEXT  -- 'kept_a', 'kept_b', 'merged', 'context_dependent'
+-- Usage metrics
+CREATE TABLE metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT DEFAULT (datetime('now')),
+    session_id TEXT,
+    event TEXT NOT NULL,          -- 'remember', 'recall'
+    memory_id TEXT,               -- for remember events
+    query TEXT,                   -- for recall events
+    result_count INTEGER,         -- for recall events
+    was_fallback INTEGER          -- for recall events (1 if empty query)
 );
 
 -- Indexes for common queries
 CREATE INDEX idx_memories_strength ON memories(strength);
 CREATE INDEX idx_memories_last_accessed ON memories(last_accessed);
-CREATE INDEX idx_conflicts_resolved ON conflicts(resolved);
+CREATE INDEX idx_metrics_session_id ON metrics(session_id);
 ```
 
 ---
@@ -273,9 +276,10 @@ Surface and resolve conflicts.
 | Language | TypeScript | MCP SDK support, type safety |
 | Runtime | Bun | Fast, built-in SQLite, test runner, TypeScript support |
 | Database | bun:sqlite | Native SQLite bindings, no external deps |
-| Vector Search | @mceachen/sqlite-vec | Native SQLite extension, prebuilt binaries |
-| Embeddings | Ollama (nomic-embed-text) | Local, private, good quality |
-| Fallback | Keyword extraction | Works when Ollama unavailable |
+| Full-text Search | FTS5 | Built into SQLite, BM25 ranking |
+| Embeddings | @huggingface/transformers | Local WASM, no external services required |
+| Embedding Model | bge-small-en-v1.5 | Good quality, 384 dimensions, ~33MB |
+| Vector Search | Pure JS cosine similarity | No native deps, fully Bun compatible |
 | MCP SDK | @modelcontextprotocol/sdk | Standard protocol |
 | Linter | oxlint | Fast Rust-based linter |
 | Formatter | Biome | Fast Rust-based formatter + import sorting |
@@ -295,34 +299,34 @@ engram/
 ├── tsconfig.json
 ├── src/
 │   ├── index.ts            # MCP server entry point
-│   ├── config.ts           # Configuration (paths, thresholds)
+│   ├── config.ts           # Configuration (paths, thresholds, embedding model)
+│   ├── embedding.ts        # Embedding generation with transformers.js
+│   ├── cli.ts              # CLI commands (stats, search, daemon control)
+│   ├── http.ts             # HTTP server for REST API
+│   ├── daemon.ts           # Daemon process management
 │   │
 │   ├── db/
-│   │   ├── index.ts        # Database connection and setup
-│   │   └── schema.sql      # Table definitions
-│   │
-│   ├── memory/             # (Slice 2+)
-│   │   ├── remember.ts     # Store logic with dedup
-│   │   ├── recall.ts       # Retrieval with decay scoring
-│   │   ├── reflect.ts      # Conflict detection and resolution
-│   │   └── decay.ts        # Strength calculations
-│   │
-│   ├── embeddings/         # (Slice 2+)
-│   │   ├── index.ts        # Unified embedding interface
-│   │   ├── ollama.ts       # Ollama client
-│   │   └── fallback.ts     # Keyword extraction fallback
+│   │   ├── index.ts        # Database connection, queries, migrations
+│   │   └── schema.sql      # Table definitions (memories, FTS5, metrics)
 │   │
 │   └── tools/
-│       ├── remember.ts     # remember tool handler
-│       └── recall.ts       # recall tool handler
+│       ├── remember.ts     # remember tool - store with embeddings
+│       └── recall.ts       # recall tool - semantic search
 │
 ├── test/
 │   ├── db.test.ts          # Database operations
 │   ├── remember.test.ts    # remember tool tests
-│   └── recall.test.ts      # recall tool tests
+│   ├── recall.test.ts      # recall tool tests (including semantic)
+│   ├── metrics.test.ts     # Metrics tracking tests
+│   └── cli.test.ts         # CLI command tests
 │
 ├── scripts/
-│   └── install.sh          # Install dependencies, setup
+│   ├── install.sh          # Install dependencies, setup
+│   └── setup.ts            # Deploy OpenCode plugin
+│
+├── opencode/
+│   └── plugins/
+│       └── engram.ts       # OpenCode plugin for auto memory capture
 │
 └── README.md               # Usage documentation
 ```
@@ -331,27 +335,20 @@ engram/
 
 ## Configuration
 
-**File:** `~/.config/engram/config.json` (optional, has defaults)
+**Environment variables** (all optional, have defaults):
 
-```json
-{
-    "database": {
-        "path": "~/.local/share/engram/engram.db"
-    },
-    "embeddings": {
-        "provider": "ollama",
-        "model": "nomic-embed-text",
-        "fallback_enabled": true
-    },
-    "memory": {
-        "similarity_threshold": 0.85,
-        "conflict_threshold": 0.75,
-        "decay_factor": 0.95,
-        "min_strength": 0.1,
-        "default_recall_limit": 10
-    }
-}
+```bash
+ENGRAM_DB_PATH=~/.local/share/engram/engram.db    # Database location
+ENGRAM_HTTP_PORT=7749                              # HTTP server port
+ENGRAM_HTTP_HOST=127.0.0.1                         # HTTP server host
+ENGRAM_EMBEDDING_MODEL=Xenova/bge-small-en-v1.5   # Embedding model
 ```
+
+**Default paths:**
+- Database: `~/.local/share/engram/engram.db`
+- Model cache: `~/.local/share/engram/models/`
+- PID file: `~/.local/share/engram/engram.pid`
+- Log file: `~/.local/share/engram/engram.log`
 
 ---
 
@@ -375,102 +372,84 @@ Development follows vertical slices - each slice delivers working end-to-end fun
 
 **Validation gate:** `bun run validate` (typecheck + lint + format:check + test)
 
-### Slice 2: Semantic Search
-**Goal:** Vector similarity search working end-to-end
+### Slice 2: FTS5 Keyword Search ✅
+**Goal:** Full-text search for memory retrieval
 
-- [ ] Ollama client for embedding generation
-- [ ] Fallback keyword extraction when Ollama unavailable
-- [ ] sqlite-vec integration for vector storage
-- [ ] Similarity search in recall
-- [ ] Graceful degradation to keyword search
-- [ ] Installer offers Ollama setup
+- [x] FTS5 virtual table for content indexing
+- [x] BM25 ranking for search relevance
+- [x] Prefix search support (e.g., "Type*")
+- [x] Boolean operators (OR)
+- [x] Graceful fallback to recent memories when query empty
 
-### Slice 3: Memory Intelligence
-**Goal:** Deduplication, merging, and decay
+### Slice 2.5: Metrics and Session Tracking ✅
+**Goal:** Usage analytics for memory system
 
-- [ ] Deduplication via similarity threshold (>0.85 = merge)
+- [x] Metrics table for tracking remember/recall events
+- [x] Session ID support for per-session analytics
+- [x] Hit rate and fallback rate calculations
+- [x] CLI `metrics` command
+
+### Slice 3: HTTP Server and Daemon ✅
+**Goal:** REST API for external integrations
+
+- [x] HTTP server with `/remember`, `/recall`, `/health` endpoints
+- [x] Daemon management (start/stop/status/restart)
+- [x] CLI commands for server control (`serve`, `start`, `stop`, `status`, `restart`)
+- [x] CLI commands for memory inspection (`stats`, `recent`, `search`, `show`)
+- [x] PID file and log file management
+
+### Slice 3.5: OpenCode Plugin Integration ✅
+**Goal:** Automatic memory capture from OpenCode sessions
+
+- [x] Plugin that hooks into `session.idle` events
+- [x] Auto-starts daemon if not running
+- [x] Calls HTTP API to persist session context
+- [x] Setup script for plugin deployment (`bun run setup`)
+
+### Slice 4: Semantic Search with Local Embeddings ✅
+**Goal:** Vector similarity search without external dependencies
+
+- [x] `@huggingface/transformers` for local embedding generation
+- [x] `bge-small-en-v1.5` model (384 dimensions, ~33MB, WASM)
+- [x] Embeddings stored as BLOB in SQLite
+- [x] Cosine similarity search in pure JavaScript
+- [x] FTS5 fallback when embeddings unavailable
+- [x] Async `remember`/`recall` for embedding generation
+- [x] Database migration for existing databases
+
+### Slice 5: Memory Lifecycle (Future)
+**Goal:** Memory decay and management
+
+- [ ] Decay algorithm (strength reduces over time without access)
+- [ ] Strength boost on access
+- [ ] Prune low-strength memories (CLI or automatic)
+
+### Slice 6: Memory Intelligence (Future)
+**Goal:** Deduplication and conflict handling
+
+- [ ] Deduplication via similarity threshold on remember
 - [ ] Merge logic with revision history
-- [ ] `revisions` table
-- [ ] Decay algorithm implementation
-- [ ] Strength recalculation on access
-- [ ] Conflict detection on remember
-- [ ] `conflicts` table
+- [ ] Conflict detection for contradictory memories
+- [ ] `reflect` tool for surfacing and resolving conflicts
 
-### Slice 4: Conflict Resolution
-**Goal:** `reflect` tool for surfacing and resolving conflicts
-
-- [ ] `reflect` tool - list unresolved conflicts
-- [ ] Resolution actions: keep_a, keep_b, merge, keep_both
-- [ ] Proper archival of superseded memories
-
-### Slice 5: Portability
+### Slice 7: Portability (Future)
 **Goal:** Transport memory across machines
 
-- [ ] `engram_export` tool - export to JSON format
-- [ ] `engram_import` tool - import with replace/merge modes
-- [ ] Export includes embeddings (handles non-determinism)
-- [ ] Version metadata in export format
-
-### Slice 6: Polish & Integration
-**Goal:** Production-ready quality
-
-- [ ] Comprehensive README with setup instructions
-- [ ] MCP client configuration examples
-- [ ] Error handling and logging
-- [ ] Test in real conversations
-- [ ] Iterate based on usage patterns
+- [ ] `engram export` - export to JSON format
+- [ ] `engram import` - import with replace/merge modes
+- [ ] Embeddings included in export (handles non-determinism)
 
 ---
 
 ## Open Questions / Future Considerations
 
-1. **Embedding model size** - nomic-embed-text is ~270MB. Acceptable? Alternatives: all-minilm (smaller, less accurate) or mxbai-embed-large (bigger, more accurate).
+1. **Memory size limits** - Should individual memories have a max length? Very long memories might dominate similarity searches.
 
-2. **Batch operations** - Should recall update access patterns for all returned memories, or just top result? Currently: all returned memories.
+2. **Multi-agent** - If multiple agent sessions run concurrently, SQLite handles this (WAL mode), but conflict detection might flag false positives.
 
-3. **Memory size limits** - Should individual memories have a max length? Very long memories might dominate similarity searches.
+3. **Privacy** - All data is local. But should there be an explicit "forget everything about X" command?
 
-4. **Multi-agent** - If multiple agent sessions run concurrently, SQLite handles this (WAL mode), but conflict detection might flag false positives.
-
-5. **Privacy** - All data is local. But should there be an explicit "forget everything about X" command?
-
----
-
-## Portability Design
-
-**Goal:** Transport memory across machines with eventual consistency.
-
-### Export Format (JSON)
-```json
-{
-    "version": "1.0",
-    "exported_at": "2025-01-29T10:00:00Z",
-    "machine": "macbook-pro",
-    "memories": [
-        {
-            "id": "uuid-1",
-            "content": "Prefer composition over inheritance",
-            "category": "decision",
-            "created_at": "2025-01-15T...",
-            "updated_at": "2025-01-20T...",
-            "strength": 0.95,
-            "access_count": 12,
-            "embedding": [0.1, 0.2, ...]
-        }
-    ],
-    "revisions": [...],
-    "conflicts": [...]
-}
-```
-
-### Import Modes
-- **Replace**: Wipe local DB, load import (clean slate)
-- **Merge**: Add new memories, skip duplicates by ID
-
-### Design Decisions
-- Embeddings included in export (handles non-determinism across machines)
-- Single-machine-at-a-time usage model (no real-time sync)
-- Custom DB path supported via config for symlink-to-cloud workflows
+4. **Embedding model updates** - When upgrading models, existing embeddings become incompatible. Need a re-embedding migration strategy.
 
 ---
 
@@ -481,10 +460,10 @@ The system is working when:
 1. **Persistence** - Information shared in one session is available in the next
 2. **Relevance** - `recall` returns genuinely useful memories, not noise
 3. **Zero maintenance** - No manual curation needed after initial adoption
-4. **Graceful degradation** - Works (less optimally) when Ollama is unavailable
+4. **Graceful degradation** - Works with FTS5 keyword search when embeddings unavailable
 5. **Non-intrusive** - Doesn't noticeably slow down agent responses
 6. **Cross-project** - Learnings from project A help when working on project B
-7. **Portable** - Can export memories and import on a different machine
+7. **Local-first** - All data and models run locally, no external services required
 
 ---
 

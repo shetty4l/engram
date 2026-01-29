@@ -100,7 +100,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (!input.content) {
         throw new Error("content is required");
       }
-      const result = remember(input);
+      const result = await remember(input);
       return {
         content: [
           {
@@ -116,7 +116,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (input.query === undefined) {
         throw new Error("query is required");
       }
-      const result = recall(input);
+      const result = await recall(input);
       return {
         content: [
           {

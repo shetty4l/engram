@@ -4,8 +4,14 @@
   "description": "Persistent memory MCP server for AI agents",
   "type": "module",
   "main": "src/index.ts",
+  "bin": {
+    "engram": "./src/cli.ts"
+  },
   "scripts": {
     "start": "bun run src/index.ts",
+    "analyze": "bun run src/cli.ts",
+    "build:cli": "bun build src/cli.ts --compile --outfile engram",
+    "setup": "bun run scripts/setup.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src/",
     "format": "biome check --write src/ test/",
@@ -15,6 +21,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {

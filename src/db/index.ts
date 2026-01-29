@@ -14,17 +14,35 @@ export interface Memory {
   last_accessed: string;
   access_count: number;
   strength: number;
+  embedding: Buffer | null;
 }
 
 export interface CreateMemoryInput {
   id: string;
   content: string;
   category?: string;
+  embedding?: Buffer;
 }
 
 function getSchemaSQL(): string {
   const schemaPath = join(dirname(import.meta.path), "schema.sql");
   return readFileSync(schemaPath, "utf-8");
+}
+
+/**
+ * Run migrations for existing databases.
+ * Adds new columns that may not exist in older schemas.
+ */
+function runMigrations(database: Database): void {
+  // Check if embedding column exists
+  const tableInfo = database.prepare("PRAGMA table_info(memories)").all() as {
+    name: string;
+  }[];
+  const hasEmbedding = tableInfo.some((col) => col.name === "embedding");
+
+  if (!hasEmbedding) {
+    database.exec("ALTER TABLE memories ADD COLUMN embedding BLOB");
+  }
 }
 
 export function initDatabase(dbPath?: string): Database {
@@ -54,6 +72,9 @@ export function initDatabase(dbPath?: string): Database {
   const schema = getSchemaSQL();
   db.exec(schema);
 
+  // Run migrations for existing databases
+  runMigrations(db);
+
   return db;
 }
 
@@ -81,8 +102,8 @@ export function resetDatabase(): void {
 export function createMemory(input: CreateMemoryInput): Memory {
   const database = getDatabase();
   const stmt = database.prepare(`
-    INSERT INTO memories (id, content, category)
-    VALUES ($id, $content, $category)
+    INSERT INTO memories (id, content, category, embedding)
+    VALUES ($id, $content, $category, $embedding)
     RETURNING *
   `);
 
@@ -90,6 +111,7 @@ export function createMemory(input: CreateMemoryInput): Memory {
     $id: input.id,
     $content: input.content,
     $category: input.category ?? null,
+    $embedding: input.embedding ?? null,
   }) as Memory;
 }
 
@@ -225,5 +247,142 @@ export function getMetricsSummary(session_id?: string): MetricsSummary {
     total_recalls: recalls.count,
     recall_hit_rate: recalls.count > 0 ? recallHits.count / recalls.count : 0,
     fallback_rate: recalls.count > 0 ? fallbacks.count / recalls.count : 0,
+  };
+}
+
+// Stats functions for CLI
+
+export interface CategoryCount {
+  category: string | null;
+  count: number;
+}
+
+export interface MemoryStats {
+  total_memories: number;
+  categories: CategoryCount[];
+  oldest_memory: string | null;
+  newest_memory: string | null;
+  total_access_count: number;
+  avg_strength: number;
+}
+
+export function getStats(): MemoryStats {
+  const database = getDatabase();
+
+  const total = database
+    .prepare("SELECT COUNT(*) as count FROM memories")
+    .get() as { count: number };
+
+  const categories = database
+    .prepare(
+      `SELECT category, COUNT(*) as count FROM memories GROUP BY category ORDER BY count DESC`,
+    )
+    .all() as CategoryCount[];
+
+  const oldest = database
+    .prepare("SELECT MIN(created_at) as date FROM memories")
+    .get() as { date: string | null };
+
+  const newest = database
+    .prepare("SELECT MAX(created_at) as date FROM memories")
+    .get() as { date: string | null };
+
+  const accessCount = database
+    .prepare("SELECT SUM(access_count) as total FROM memories")
+    .get() as { total: number | null };
+
+  const avgStrength = database
+    .prepare("SELECT AVG(strength) as avg FROM memories")
+    .get() as { avg: number | null };
+
+  return {
+    total_memories: total.count,
+    categories,
+    oldest_memory: oldest.date,
+    newest_memory: newest.date,
+    total_access_count: accessCount.total ?? 0,
+    avg_strength: avgStrength.avg ?? 0,
+  };
+}
+
+export function getRecentMemories(limit: number = 10): Memory[] {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    SELECT * FROM memories 
+    ORDER BY created_at DESC
+    LIMIT $limit
+  `);
+  return stmt.all({ $limit: limit }) as Memory[];
+}
+
+// Embedding-related functions
+
+export interface MemoryWithEmbedding {
+  id: string;
+  content: string;
+  category: string | null;
+  strength: number;
+  created_at: string;
+  access_count: number;
+  embedding: Buffer | null;
+}
+
+/**
+ * Get all memories with embeddings for semantic search.
+ */
+export function getAllMemoriesWithEmbeddings(): MemoryWithEmbedding[] {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    SELECT id, content, category, strength, created_at, access_count, embedding
+    FROM memories
+    WHERE embedding IS NOT NULL
+  `);
+  return stmt.all() as MemoryWithEmbedding[];
+}
+
+/**
+ * Get memories without embeddings (for backfill).
+ */
+export function getMemoriesWithoutEmbeddings(): {
+  id: string;
+  content: string;
+}[] {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    SELECT id, content FROM memories WHERE embedding IS NULL
+  `);
+  return stmt.all() as { id: string; content: string }[];
+}
+
+/**
+ * Update a memory's embedding.
+ */
+export function updateMemoryEmbedding(id: string, embedding: Buffer): void {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    UPDATE memories SET embedding = $embedding WHERE id = $id
+  `);
+  stmt.run({ $id: id, $embedding: embedding });
+}
+
+/**
+ * Count memories with and without embeddings.
+ */
+export function countEmbeddingStatus(): {
+  with_embedding: number;
+  without_embedding: number;
+} {
+  const database = getDatabase();
+  const withEmbed = database
+    .prepare(
+      "SELECT COUNT(*) as count FROM memories WHERE embedding IS NOT NULL",
+    )
+    .get() as { count: number };
+  const withoutEmbed = database
+    .prepare("SELECT COUNT(*) as count FROM memories WHERE embedding IS NULL")
+    .get() as { count: number };
+  return {
+    with_embedding: withEmbed.count,
+    without_embedding: withoutEmbed.count,
   };
 }
