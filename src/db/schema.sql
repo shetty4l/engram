@@ -40,3 +40,19 @@ END;
 CREATE TRIGGER IF NOT EXISTS memories_fts_delete AFTER DELETE ON memories BEGIN
     INSERT INTO memories_fts(memories_fts, rowid, content) VALUES ('delete', OLD.rowid, OLD.content);
 END;
+
+-- Metrics table for tracking usage
+CREATE TABLE IF NOT EXISTS metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT DEFAULT (datetime('now')),
+    session_id TEXT,
+    event TEXT NOT NULL,          -- 'remember', 'recall'
+    memory_id TEXT,               -- for remember events
+    query TEXT,                   -- for recall events
+    result_count INTEGER,         -- for recall events
+    was_fallback INTEGER          -- for recall events (1 if empty query)
+);
+
+-- Index for querying metrics by session
+CREATE INDEX IF NOT EXISTS idx_metrics_session_id ON metrics(session_id);
+CREATE INDEX IF NOT EXISTS idx_metrics_event ON metrics(event);

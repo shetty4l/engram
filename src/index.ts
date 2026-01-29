@@ -44,6 +44,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 "Optional category: decision, pattern, fact, preference, insight",
               enum: ["decision", "pattern", "fact", "preference", "insight"],
             },
+            session_id: {
+              type: "string",
+              description:
+                "Optional session identifier from the calling harness (e.g., OpenCode session ID)",
+            },
           },
           required: ["content"],
         },
@@ -71,6 +76,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             min_strength: {
               type: "number",
               description: "Minimum strength threshold (0.0-1.0, default: 0.1)",
+            },
+            session_id: {
+              type: "string",
+              description:
+                "Optional session identifier from the calling harness (e.g., OpenCode session ID)",
             },
           },
           required: ["query"],
@@ -103,7 +113,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     case "recall": {
       const input = args as unknown as RecallInput;
-      if (!input.query) {
+      if (input.query === undefined) {
         throw new Error("query is required");
       }
       const result = recall(input);
