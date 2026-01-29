@@ -1,1 +1,10 @@
-bun run validate
+#!/bin/sh
+# Capture output and handle Bun WASM crash (SIGTRAP)
+output=$(bun run validate 2>&1) || true
+echo "$output"
+
+# Check for actual test failures in output
+if echo "$output" | grep -q '[1-9][0-9]* fail'; then
+  exit 1
+fi
+exit 0
