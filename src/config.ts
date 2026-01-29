@@ -9,6 +9,14 @@ export interface Config {
     defaultRecallLimit: number;
     minStrength: number;
   };
+  http: {
+    port: number;
+    host: string;
+  };
+  embedding: {
+    model: string;
+    cacheDir: string;
+  };
 }
 
 function expandPath(path: string): string {
@@ -38,6 +46,16 @@ export function getConfig(): Config {
     memory: {
       defaultRecallLimit: 10,
       minStrength: 0.1,
+    },
+    http: {
+      port: process.env.ENGRAM_HTTP_PORT
+        ? parseInt(process.env.ENGRAM_HTTP_PORT, 10)
+        : 7749,
+      host: process.env.ENGRAM_HTTP_HOST || "127.0.0.1",
+    },
+    embedding: {
+      model: process.env.ENGRAM_EMBEDDING_MODEL || "Xenova/bge-small-en-v1.5",
+      cacheDir: join(dataDir, "models"),
     },
   };
 }

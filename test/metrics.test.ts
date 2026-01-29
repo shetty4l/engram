@@ -6,12 +6,14 @@ import {
   logMetric,
   resetDatabase,
 } from "../src/db";
+import { resetEmbedder } from "../src/embedding";
 import { recall } from "../src/tools/recall";
 import { remember } from "../src/tools/remember";
 
 describe("metrics", () => {
   beforeEach(() => {
     resetDatabase();
+    resetEmbedder();
     initDatabase(":memory:");
   });
 
@@ -108,8 +110,8 @@ describe("metrics", () => {
   });
 
   describe("integration with tools", () => {
-    test("remember logs metric with session_id", () => {
-      remember({
+    test("remember logs metric with session_id", async () => {
+      await remember({
         content: "Test memory",
         session_id: "test-session",
       });
@@ -118,10 +120,10 @@ describe("metrics", () => {
       expect(summary.total_remembers).toBe(1);
     });
 
-    test("recall logs metric with session_id and query", () => {
-      remember({ content: "TypeScript is great" });
+    test("recall logs metric with session_id and query", async () => {
+      await remember({ content: "TypeScript is great" });
 
-      recall({
+      await recall({
         query: "TypeScript",
         session_id: "test-session",
       });
@@ -131,10 +133,10 @@ describe("metrics", () => {
       expect(summary.recall_hit_rate).toBe(1); // Found the memory
     });
 
-    test("recall logs fallback when query is empty", () => {
-      remember({ content: "Test memory" });
+    test("recall logs fallback when query is empty", async () => {
+      await remember({ content: "Test memory" });
 
-      recall({
+      await recall({
         query: "",
         session_id: "test-session",
       });
@@ -143,25 +145,29 @@ describe("metrics", () => {
       expect(summary.fallback_rate).toBe(1);
     });
 
-    test("tracks complete session workflow", () => {
+    test("tracks complete session workflow", async () => {
       const sessionId = "workflow-session";
 
       // User stores some memories
-      remember({
+      await remember({
         content: "Prefer functional patterns",
         session_id: sessionId,
       });
-      remember({ content: "Use 2-space indentation", session_id: sessionId });
+      await remember({
+        content: "Use 2-space indentation",
+        session_id: sessionId,
+      });
 
-      // User searches for memories
-      recall({ query: "functional", session_id: sessionId }); // hit
-      recall({ query: "indentation", session_id: sessionId }); // hit
-      recall({ query: "nonexistent", session_id: sessionId }); // miss
+      // User searches for memories - with semantic search, all queries find something
+      await recall({ query: "functional", session_id: sessionId }); // hit
+      await recall({ query: "indentation", session_id: sessionId }); // hit
+      await recall({ query: "code style", session_id: sessionId }); // hit (semantic match)
 
       const summary = getMetricsSummary(sessionId);
       expect(summary.total_remembers).toBe(2);
       expect(summary.total_recalls).toBe(3);
-      expect(summary.recall_hit_rate).toBeCloseTo(0.67, 1); // 2/3
+      // With semantic search, all queries return results
+      expect(summary.recall_hit_rate).toBe(1);
     });
   });
 });

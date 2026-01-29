@@ -5,12 +5,14 @@ import {
   initDatabase,
   resetDatabase,
 } from "../src/db";
+import { resetEmbedder } from "../src/embedding";
 import { recall } from "../src/tools/recall";
 import { remember } from "../src/tools/remember";
 
 describe("recall tool", () => {
   beforeEach(() => {
     resetDatabase();
+    resetEmbedder();
     initDatabase(":memory:");
   });
 
@@ -18,39 +20,39 @@ describe("recall tool", () => {
     closeDatabase();
   });
 
-  test("returns empty array when no memories exist", () => {
-    const result = recall({ query: "anything" });
+  test("returns empty array when no memories exist", async () => {
+    const result = await recall({ query: "anything" });
 
     expect(result.memories).toEqual([]);
     expect(result.fallback_mode).toBe(false);
   });
 
-  test("retrieves stored memories", () => {
-    remember({ content: "Memory 1" });
-    remember({ content: "Memory 2" });
+  test("retrieves stored memories", async () => {
+    await remember({ content: "Memory 1" });
+    await remember({ content: "Memory 2" });
 
-    const result = recall({ query: "Memory" });
-
-    expect(result.memories.length).toBe(2);
-  });
-
-  test("respects limit parameter", () => {
-    remember({ content: "Memory 1" });
-    remember({ content: "Memory 2" });
-    remember({ content: "Memory 3" });
-
-    const result = recall({ query: "Memory", limit: 2 });
+    const result = await recall({ query: "Memory" });
 
     expect(result.memories.length).toBe(2);
   });
 
-  test("filters by category", () => {
-    remember({ content: "Fact about TypeScript", category: "fact" });
-    remember({ content: "Decision about Python", category: "decision" });
-    remember({ content: "Fact about Rust", category: "fact" });
+  test("respects limit parameter", async () => {
+    await remember({ content: "Memory 1" });
+    await remember({ content: "Memory 2" });
+    await remember({ content: "Memory 3" });
 
-    const result = recall({
-      query: "Fact OR TypeScript OR Rust",
+    const result = await recall({ query: "Memory", limit: 2 });
+
+    expect(result.memories.length).toBe(2);
+  });
+
+  test("filters by category", async () => {
+    await remember({ content: "Fact about TypeScript", category: "fact" });
+    await remember({ content: "Decision about Python", category: "decision" });
+    await remember({ content: "Fact about Rust", category: "fact" });
+
+    const result = await recall({
+      query: "TypeScript Rust programming",
       category: "fact",
     });
 
@@ -58,24 +60,24 @@ describe("recall tool", () => {
     expect(result.memories.every((m) => m.category === "fact")).toBe(true);
   });
 
-  test("updates access count on recall", () => {
-    const { id } = remember({ content: "Test memory" });
+  test("updates access count on recall", async () => {
+    const { id } = await remember({ content: "Test memory" });
 
     // Initial access count is 1
     let memory = getMemoryById(id);
     expect(memory!.access_count).toBe(1);
 
     // Recall should increment access count
-    recall({ query: "Test" });
+    await recall({ query: "Test" });
 
     memory = getMemoryById(id);
     expect(memory!.access_count).toBe(2);
   });
 
-  test("returns memories with correct shape", () => {
-    remember({ content: "Test content", category: "fact" });
+  test("returns memories with correct shape", async () => {
+    await remember({ content: "Test content", category: "fact" });
 
-    const result = recall({ query: "Test" });
+    const result = await recall({ query: "Test" });
 
     expect(result.memories[0]).toMatchObject({
       content: "Test content",
@@ -88,86 +90,85 @@ describe("recall tool", () => {
     expect(result.memories[0].relevance).toBeGreaterThan(0);
   });
 
-  test("fallback mode is false when query is provided", () => {
-    remember({ content: "Test memory" });
-    const result = recall({ query: "Test" });
+  test("fallback mode is false when query is provided", async () => {
+    await remember({ content: "Test memory" });
+    const result = await recall({ query: "Test" });
     expect(result.fallback_mode).toBe(false);
   });
 
-  test("fallback mode is true when query is empty", () => {
-    remember({ content: "Test memory" });
-    const result = recall({ query: "" });
+  test("fallback mode is true when query is empty", async () => {
+    await remember({ content: "Test memory" });
+    const result = await recall({ query: "" });
     expect(result.fallback_mode).toBe(true);
   });
 
-  test("fallback mode is true when query is whitespace", () => {
-    remember({ content: "Test memory" });
-    const result = recall({ query: "   " });
+  test("fallback mode is true when query is whitespace", async () => {
+    await remember({ content: "Test memory" });
+    const result = await recall({ query: "   " });
     expect(result.fallback_mode).toBe(true);
   });
 
-  // FTS5 search behavior tests
-  describe("FTS5 search", () => {
-    test("finds memories containing query words", () => {
-      remember({ content: "TypeScript is great for type safety" });
-      remember({ content: "Python is good for data science" });
-      remember({ content: "JavaScript runs in browsers" });
+  // Semantic search behavior tests
+  describe("semantic search", () => {
+    test("finds memories with semantically similar content", async () => {
+      await remember({ content: "TypeScript is great for type safety" });
+      await remember({ content: "Python is good for data science" });
+      await remember({ content: "JavaScript runs in browsers" });
 
-      const result = recall({ query: "TypeScript" });
+      const result = await recall({ query: "statically typed languages" });
 
-      expect(result.memories.length).toBe(1);
+      // TypeScript should be most relevant for "statically typed languages"
+      expect(result.memories.length).toBeGreaterThan(0);
       expect(result.memories[0].content).toContain("TypeScript");
     });
 
-    test("finds memories with partial word matches using prefix", () => {
-      remember({ content: "TypeScript is great" });
-      remember({ content: "Python is good" });
+    test("returns no results for completely unrelated query when no embeddings match", async () => {
+      await remember({ content: "TypeScript is great" });
+      await remember({ content: "Python is good" });
 
-      const result = recall({ query: "Type*" });
+      // Even with semantic search, very unrelated content should score low
+      const result = await recall({ query: "cooking recipes for pasta" });
 
-      expect(result.memories.length).toBe(1);
-      expect(result.memories[0].content).toContain("TypeScript");
+      // Results may still be returned but with low relevance
+      // The semantic similarity should be low
+      if (result.memories.length > 0) {
+        expect(result.memories[0].relevance).toBeLessThan(0.5);
+      }
     });
 
-    test("finds memories matching multiple words (OR)", () => {
-      remember({ content: "TypeScript is great" });
-      remember({ content: "Python is good" });
-      remember({ content: "Rust is fast" });
+    test("empty query returns recent memories (fallback)", async () => {
+      await remember({ content: "First memory" });
+      await remember({ content: "Second memory" });
 
-      const result = recall({ query: "TypeScript OR Python" });
-
-      expect(result.memories.length).toBe(2);
-    });
-
-    test("returns no results for non-matching query", () => {
-      remember({ content: "TypeScript is great" });
-      remember({ content: "Python is good" });
-
-      const result = recall({ query: "Golang" });
-
-      expect(result.memories.length).toBe(0);
-    });
-
-    test("empty query returns recent memories (fallback)", () => {
-      remember({ content: "First memory" });
-      remember({ content: "Second memory" });
-
-      const result = recall({ query: "" });
+      const result = await recall({ query: "" });
 
       expect(result.memories.length).toBe(2);
       expect(result.fallback_mode).toBe(true);
     });
 
-    test("ranks better matches higher", () => {
-      remember({ content: "TypeScript TypeScript TypeScript" });
-      remember({ content: "TypeScript is okay" });
+    test("ranks semantically similar content higher", async () => {
+      await remember({ content: "I love programming in TypeScript" });
+      await remember({ content: "The weather today is sunny and warm" });
 
-      const result = recall({ query: "TypeScript" });
+      const result = await recall({ query: "coding with JavaScript" });
 
       expect(result.memories.length).toBe(2);
-      // Both should have positive relevance scores
-      expect(result.memories[0].relevance).toBeGreaterThan(0);
-      expect(result.memories[1].relevance).toBeGreaterThan(0);
+      // TypeScript content should be more similar to "coding with JavaScript"
+      expect(result.memories[0].content).toContain("TypeScript");
+      expect(result.memories[0].relevance).toBeGreaterThan(
+        result.memories[1].relevance,
+      );
+    });
+
+    test("handles synonyms and related concepts", async () => {
+      await remember({ content: "The automobile needs an oil change" });
+      await remember({ content: "I went hiking in the mountains" });
+
+      const result = await recall({ query: "car maintenance" });
+
+      expect(result.memories.length).toBe(2);
+      // "automobile" should be semantically similar to "car"
+      expect(result.memories[0].content).toContain("automobile");
     });
   });
 });

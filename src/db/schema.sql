@@ -1,5 +1,6 @@
 -- Engram Database Schema
--- Slice 1: Core memories table (no embedding column yet)
+-- Slice 1: Core memories table
+-- Slice 2: Embedding column for semantic search
 
 CREATE TABLE IF NOT EXISTS memories (
     id TEXT PRIMARY KEY,
@@ -13,7 +14,10 @@ CREATE TABLE IF NOT EXISTS memories (
     access_count INTEGER DEFAULT 1,
     
     -- Decay/relevance scoring
-    strength REAL DEFAULT 1.0
+    strength REAL DEFAULT 1.0,
+    
+    -- Semantic embedding (Float32Array as BLOB)
+    embedding BLOB
 );
 
 -- Indexes for common queries

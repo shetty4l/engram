@@ -1,4 +1,5 @@
 import { createMemory, logMetric } from "../db";
+import { embed, embeddingToBuffer } from "../embedding";
 
 export interface RememberInput {
   content: string;
@@ -11,13 +12,18 @@ export interface RememberOutput {
   // Future: merged_with, conflict_detected, conflict_with
 }
 
-export function remember(input: RememberInput): RememberOutput {
+export async function remember(input: RememberInput): Promise<RememberOutput> {
   const id = crypto.randomUUID();
+
+  // Generate embedding for semantic search
+  const embeddingVector = await embed(input.content);
+  const embeddingBuffer = embeddingToBuffer(embeddingVector);
 
   createMemory({
     id,
     content: input.content,
     category: input.category,
+    embedding: embeddingBuffer,
   });
 
   // Log metric
