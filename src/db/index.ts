@@ -126,3 +126,29 @@ export function countMemories(): number {
   const result = stmt.get() as { count: number };
   return result.count;
 }
+
+export interface SearchResult extends Memory {
+  rank: number;
+}
+
+export function searchMemories(query: string, limit: number): SearchResult[] {
+  const database = getDatabase();
+
+  // Empty query falls back to recent memories by strength
+  if (!query.trim()) {
+    const memories = getAllMemories(limit);
+    return memories.map((m) => ({ ...m, rank: 0 }));
+  }
+
+  // FTS5 search with BM25 ranking (lower rank = better match)
+  const stmt = database.prepare(`
+    SELECT m.*, bm25(memories_fts) as rank
+    FROM memories_fts fts
+    JOIN memories m ON m.rowid = fts.rowid
+    WHERE memories_fts MATCH $query
+    ORDER BY rank, m.strength DESC, m.last_accessed DESC
+    LIMIT $limit
+  `);
+
+  return stmt.all({ $query: query, $limit: limit }) as SearchResult[];
+}
