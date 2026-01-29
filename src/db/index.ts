@@ -152,3 +152,78 @@ export function searchMemories(query: string, limit: number): SearchResult[] {
 
   return stmt.all({ $query: query, $limit: limit }) as SearchResult[];
 }
+
+// Metrics functions
+
+export interface MetricEvent {
+  session_id?: string;
+  event: "remember" | "recall";
+  memory_id?: string;
+  query?: string;
+  result_count?: number;
+  was_fallback?: boolean;
+}
+
+export function logMetric(metric: MetricEvent): void {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    INSERT INTO metrics (session_id, event, memory_id, query, result_count, was_fallback)
+    VALUES ($session_id, $event, $memory_id, $query, $result_count, $was_fallback)
+  `);
+
+  stmt.run({
+    $session_id: metric.session_id ?? null,
+    $event: metric.event,
+    $memory_id: metric.memory_id ?? null,
+    $query: metric.query ?? null,
+    $result_count: metric.result_count ?? null,
+    $was_fallback: metric.was_fallback ? 1 : null,
+  });
+}
+
+export interface MetricsSummary {
+  total_remembers: number;
+  total_recalls: number;
+  recall_hit_rate: number;
+  fallback_rate: number;
+}
+
+export function getMetricsSummary(session_id?: string): MetricsSummary {
+  const database = getDatabase();
+
+  const whereClause = session_id ? "WHERE session_id = $session_id" : "";
+  const params: Record<string, string | null> = session_id
+    ? { $session_id: session_id }
+    : {};
+
+  const remembers = database
+    .prepare(
+      `SELECT COUNT(*) as count FROM metrics ${whereClause}${whereClause ? " AND" : "WHERE"} event = 'remember'`,
+    )
+    .get(params) as { count: number };
+
+  const recalls = database
+    .prepare(
+      `SELECT COUNT(*) as count FROM metrics ${whereClause}${whereClause ? " AND" : "WHERE"} event = 'recall'`,
+    )
+    .get(params) as { count: number };
+
+  const recallHits = database
+    .prepare(
+      `SELECT COUNT(*) as count FROM metrics ${whereClause}${whereClause ? " AND" : "WHERE"} event = 'recall' AND result_count > 0`,
+    )
+    .get(params) as { count: number };
+
+  const fallbacks = database
+    .prepare(
+      `SELECT COUNT(*) as count FROM metrics ${whereClause}${whereClause ? " AND" : "WHERE"} event = 'recall' AND was_fallback = 1`,
+    )
+    .get(params) as { count: number };
+
+  return {
+    total_remembers: remembers.count,
+    total_recalls: recalls.count,
+    recall_hit_rate: recalls.count > 0 ? recallHits.count / recalls.count : 0,
+    fallback_rate: recalls.count > 0 ? fallbacks.count / recalls.count : 0,
+  };
+}

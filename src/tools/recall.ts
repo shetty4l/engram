@@ -1,11 +1,12 @@
 import { getConfig } from "../config";
-import { searchMemories, updateMemoryAccess } from "../db";
+import { logMetric, searchMemories, updateMemoryAccess } from "../db";
 
 export interface RecallInput {
   query: string;
   limit?: number;
   category?: string;
   min_strength?: number;
+  session_id?: string;
 }
 
 export interface RecallMemory {
@@ -60,6 +61,15 @@ export function recall(input: RecallInput): RecallOutput {
     created_at: m.created_at,
     access_count: m.access_count,
   }));
+
+  // Log metric
+  logMetric({
+    session_id: input.session_id,
+    event: "recall",
+    query: input.query,
+    result_count: result.length,
+    was_fallback: isFallback,
+  });
 
   return {
     memories: result,
