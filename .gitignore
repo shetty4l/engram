@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+*.tsbuildinfo
+
+# Database files
+*.db
+*.db-wal
+*.db-shm
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
