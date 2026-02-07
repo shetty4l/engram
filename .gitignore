@@ -23,3 +23,9 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Compiled binaries
+engram-server
+
+# SSH keys
+*.pem
