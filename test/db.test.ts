@@ -3,10 +3,12 @@ import {
   closeDatabase,
   countMemories,
   createMemory,
+  deleteMemoryById,
   getAllMemories,
   getMemoryById,
   initDatabase,
   resetDatabase,
+  searchMemories,
   updateMemoryAccess,
 } from "../src/db";
 
@@ -89,5 +91,33 @@ describe("Database", () => {
 
     createMemory({ id: "m2", content: "Memory 2" });
     expect(countMemories()).toBe(2);
+  });
+
+  test("deletes an existing memory", () => {
+    createMemory({ id: "delete-me", content: "Temporary memory" });
+
+    const deleted = deleteMemoryById("delete-me");
+
+    expect(deleted).toBe(true);
+    expect(getMemoryById("delete-me")).toBeNull();
+    expect(countMemories()).toBe(0);
+  });
+
+  test("delete is idempotent for missing memory", () => {
+    const deleted = deleteMemoryById("missing-memory");
+
+    expect(deleted).toBe(false);
+  });
+
+  test("deleting a memory removes it from search", () => {
+    createMemory({ id: "search-1", content: "Project budget note" });
+
+    const beforeDelete = searchMemories("budget", 10);
+    expect(beforeDelete.map((m) => m.id)).toContain("search-1");
+
+    deleteMemoryById("search-1");
+
+    const afterDelete = searchMemories("budget", 10);
+    expect(afterDelete.map((m) => m.id)).not.toContain("search-1");
   });
 });

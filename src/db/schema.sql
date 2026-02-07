@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS metrics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp TEXT DEFAULT (datetime('now')),
     session_id TEXT,
-    event TEXT NOT NULL,          -- 'remember', 'recall'
+    event TEXT NOT NULL,          -- 'remember', 'recall', 'forget'
     memory_id TEXT,               -- for remember events
     query TEXT,                   -- for recall events
     result_count INTEGER,         -- for recall events

@@ -5,6 +5,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { initDatabase } from "./db";
+import { type ForgetInput, forget } from "./tools/forget";
 import { type RecallInput, recall } from "./tools/recall";
 import { type RememberInput, remember } from "./tools/remember";
 
@@ -86,6 +87,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["query"],
         },
       },
+      {
+        name: "forget",
+        description: "Delete a stored memory by ID.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: {
+              type: "string",
+              description: "Memory ID to delete",
+            },
+            session_id: {
+              type: "string",
+              description:
+                "Optional session identifier from the calling harness (e.g., OpenCode session ID)",
+            },
+          },
+          required: ["id"],
+        },
+      },
     ],
   };
 });
@@ -117,6 +137,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error("query is required");
       }
       const result = await recall(input);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    case "forget": {
+      const input = args as unknown as ForgetInput;
+      if (!input.id) {
+        throw new Error("id is required");
+      }
+      const result = await forget(input);
       return {
         content: [
           {

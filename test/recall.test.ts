@@ -6,6 +6,7 @@ import {
   resetDatabase,
 } from "../src/db";
 import { resetEmbedder } from "../src/embedding";
+import { forget } from "../src/tools/forget";
 import { recall } from "../src/tools/recall";
 import { remember } from "../src/tools/remember";
 
@@ -106,6 +107,19 @@ describe("recall tool", () => {
     await remember({ content: "Test memory" });
     const result = await recall({ query: "   " });
     expect(result.fallback_mode).toBe(true);
+  });
+
+  test("does not return forgotten memories", async () => {
+    const keep = await remember({ content: "Keep this memory" });
+    const remove = await remember({ content: "Forget this memory" });
+
+    await forget({ id: remove.id });
+
+    const result = await recall({ query: "memory" });
+    const ids = result.memories.map((m) => m.id);
+
+    expect(ids).toContain(keep.id);
+    expect(ids).not.toContain(remove.id);
   });
 
   // Semantic search behavior tests
