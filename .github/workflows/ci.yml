@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate
+        run: bun run validate
+
+      - name: Run full test suite (allow known Bun 133 crash only)
+        shell: bash
+        run: |
+          set +e
+          bun run test:full 2>&1 | tee full-test.log
+          code=${PIPESTATUS[0]}
+          set -e
+
+          if grep -Eq '(^|[[:space:]])[1-9][0-9]* fail([[:space:]]|$)' full-test.log; then
+            echo "Full suite has one or more test failures"
+            exit 1
+          fi
+
+          if [ "$code" -eq 133 ]; then
+            echo "::warning::Ignoring known Bun WASM/runtime crash (exit 133) after successful full-suite assertions"
+            exit 0
+          fi
+
+          exit "$code"

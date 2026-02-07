@@ -12,11 +12,15 @@
     "analyze": "bun run src/cli.ts",
     "build:cli": "bun build src/cli.ts --compile --outfile engram",
     "setup": "bun run scripts/setup.ts",
+    "opencode:config": "bun run scripts/opencode-config.ts",
+    "test:core": "bun test test/db.test.ts test/cli.test.ts",
+    "test:full": "bun test",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src/",
     "format": "biome check --write src/ test/",
     "format:check": "biome check src/ test/",
-    "validate": "bun run typecheck && bun run lint && bun run format:check && bun test",
+    "validate": "bun run typecheck && bun run lint && bun run format:check && bun run test:core",
+    "validate:full": "bun run typecheck && bun run lint && bun run format:check && bun run test:full",
     "prepare": "husky"
   },
   "dependencies": {
