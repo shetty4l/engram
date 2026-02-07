@@ -119,6 +119,25 @@ recall({ query: "coding preferences", limit: 5 })
 - `category` (optional): Filter by category
 - `min_strength` (optional): Minimum strength threshold (0.0-1.0)
 
+### `forget`
+
+Delete a stored memory by ID.
+
+```
+forget({ id: "memory-uuid" })
+```
+
+**Parameters:**
+- `id` (required): Memory ID to delete
+
+**Returns:**
+- `id`: Requested memory ID
+- `deleted`: `true` if a memory was deleted, `false` if it did not exist
+
+When users ask to forget by phrase (for example, "forget the memory about API keys"),
+the assistant should first call `recall` to resolve candidates, then call `forget`
+with the selected memory ID.
+
 ## Configuration
 
 Database location: `~/.local/share/engram/engram.db`

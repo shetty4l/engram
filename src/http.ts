@@ -4,6 +4,7 @@
  * Provides REST API for memory operations:
  * - POST /remember - Store a memory
  * - POST /recall - Retrieve memories
+ * - POST /forget - Delete a memory by ID
  * - GET /health - Health check
  *
  * Used by OpenCode plugin for silent memory extraction.
@@ -11,6 +12,7 @@
 
 import { getConfig } from "./config";
 import { initDatabase } from "./db";
+import { type ForgetInput, forget } from "./tools/forget";
 import { type RecallInput, recall } from "./tools/recall";
 import { type RememberInput, remember } from "./tools/remember";
 
@@ -101,6 +103,21 @@ async function handleRequest(req: Request): Promise<Response> {
       }
 
       const result = await recall(body);
+      return Response.json(result, { headers });
+    }
+
+    // Forget endpoint
+    if (path === "/forget" && method === "POST") {
+      const body = (await req.json()) as ForgetInput;
+
+      if (!body.id) {
+        return Response.json(
+          { error: "id is required" },
+          { status: 400, headers },
+        );
+      }
+
+      const result = await forget(body);
       return Response.json(result, { headers });
     }
 

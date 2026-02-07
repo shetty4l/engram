@@ -142,6 +142,13 @@ export function updateMemoryAccess(id: string): void {
   stmt.run({ $id: id });
 }
 
+export function deleteMemoryById(id: string): boolean {
+  const database = getDatabase();
+  const stmt = database.prepare("DELETE FROM memories WHERE id = $id");
+  const result = stmt.run({ $id: id });
+  return result.changes > 0;
+}
+
 export function countMemories(): number {
   const database = getDatabase();
   const stmt = database.prepare("SELECT COUNT(*) as count FROM memories");
@@ -179,7 +186,7 @@ export function searchMemories(query: string, limit: number): SearchResult[] {
 
 export interface MetricEvent {
   session_id?: string;
-  event: "remember" | "recall";
+  event: "remember" | "recall" | "forget";
   memory_id?: string;
   query?: string;
   result_count?: number;

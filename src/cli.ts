@@ -9,6 +9,7 @@
  *   engram search <query>  Search memories by keyword
  *   engram metrics         Show usage metrics
  *   engram show <id>       Show a specific memory
+ *   engram forget <id>     Delete a specific memory
  *
  *   engram serve           Start HTTP server (foreground)
  *   engram start           Start HTTP server as daemon
@@ -28,6 +29,7 @@ import {
   stopDaemon,
 } from "./daemon";
 import {
+  deleteMemoryById,
   getMemoryById,
   getMetricsSummary,
   getRecentMemories,
@@ -46,6 +48,7 @@ Usage:
   engram search <query>  Search memories by keyword
   engram metrics         Show usage metrics
   engram show <id>       Show a specific memory
+  engram forget <id>     Delete a specific memory
 
   engram serve           Start HTTP server (foreground)
   engram start           Start HTTP server as daemon
@@ -233,6 +236,28 @@ function cmdShow(id: string | undefined, json: boolean): void {
   console.log();
 }
 
+function cmdForget(id: string | undefined, json: boolean): void {
+  if (!id) {
+    console.error("Error: memory ID required");
+    console.error("Usage: engram forget <id>");
+    process.exit(1);
+  }
+
+  const deleted = deleteMemoryById(id);
+
+  if (json) {
+    console.log(JSON.stringify({ id, deleted }, null, 2));
+    process.exit(deleted ? 0 : 1);
+  }
+
+  if (!deleted) {
+    console.error(`Error: memory not found: ${id}`);
+    process.exit(1);
+  }
+
+  console.log(`Deleted memory: ${id}`);
+}
+
 function cmdServe(): void {
   console.log("Starting Engram HTTP server...");
   const server = startHttpServer();
@@ -347,6 +372,9 @@ async function main(): Promise<void> {
       break;
     case "show":
       cmdShow(args[0], json);
+      break;
+    case "forget":
+      cmdForget(args[0], json);
       break;
     case "help":
       console.log(HELP);
