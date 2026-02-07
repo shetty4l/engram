@@ -11,6 +11,73 @@ cd engram
 ./scripts/install.sh
 ```
 
+## OpenCode Setup
+
+Use this flow when running Engram with OpenCode.
+
+### Prerequisites
+
+- `bun` installed
+- `opencode` installed
+- `engram` CLI on PATH (run `bun link` in this repo once)
+
+### 1) Sync the OpenCode plugin
+
+From the repo root:
+
+```bash
+bun run setup
+```
+
+This copies `opencode/plugins/engram.ts` to `~/.config/opencode/plugins/engram.ts`.
+
+### 2) Add Engram MCP server to OpenCode
+
+Create or update `~/.config/opencode/opencode.json` with this block:
+
+```bash
+bun run opencode:config
+```
+
+This prints a ready-to-paste OpenCode config block with your local absolute path.
+
+```json
+{
+  "mcp": {
+    "engram": {
+      "type": "local",
+      "enabled": true,
+      "command": ["bun", "run", "/path/to/engram/src/index.ts"]
+    }
+  }
+}
+```
+
+Replace `/path/to/engram` with your local checkout path.
+
+### 3) Restart OpenCode
+
+Restart OpenCode so it loads the plugin and MCP server config.
+
+### Verification
+
+```bash
+engram status
+```
+
+- If the daemon is not running yet, that is OK.
+- The plugin auto-starts the daemon on `session.idle` or `experimental.session.compacting`.
+- Data and runtime files live in `~/.local/share/engram/` (DB, PID, logs).
+
+### Troubleshooting
+
+- `engram: command not found`: run `bun link` from this repo.
+- Plugin not loading: verify `~/.config/opencode/plugins/engram.ts` exists, then rerun `bun run setup` and restart OpenCode.
+- Daemon issues:
+  - `engram status`
+  - `engram restart`
+  - `curl http://127.0.0.1:7749/health`
+
 Add to your MCP client config (e.g., OpenCode, Claude Desktop):
 
 ```json
@@ -64,8 +131,11 @@ ENGRAM_DB_PATH=/custom/path/engram.db
 ## Development
 
 ```bash
-# Run tests
-bun test
+# Core test suite (fast + CI-safe)
+bun run test:core
+
+# Full test suite (includes embedding/WASM tests)
+bun run test:full
 
 # Type check
 bun run typecheck
@@ -75,7 +145,22 @@ bun run lint
 
 # All validation
 bun run validate
+
+# Full validation (includes embedding/WASM tests)
+bun run validate:full
 ```
+
+`validate` intentionally runs the core suite (`test:core`) as the required CI gate.
+CI also runs `test:full` on every push and pull request. If full-suite assertions pass
+but Bun exits with the known transformers/WASM runtime crash (`133`), CI records a warning
+and continues. Any real test failures still fail CI.
+
+## CI/CD
+
+- CI workflow: `.github/workflows/ci.yml`
+  - Runs on every push and pull request
+  - Executes required `bun run validate`
+  - Executes `bun run test:full` with special handling for known Bun exit `133`
 
 ## Roadmap
 
