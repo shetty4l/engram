@@ -4,12 +4,53 @@ Persistent memory for AI agents. An MCP server that gives your AI assistant long
 
 ## Quick Start
 
+### Option 1: Local (Recommended for personal use)
+
 ```bash
-# Clone and install
-git clone <repo>
+git clone https://github.com/shetty4l/engram.git
 cd engram
 ./scripts/install.sh
 ```
+
+Add to your MCP client config:
+
+```json
+{
+  "engram": {
+    "command": "bun",
+    "args": ["run", "/path/to/engram/src/index.ts"]
+  }
+}
+```
+
+### Option 2: AWS EC2 (Always-on, cross-device)
+
+Deploy to your AWS account with one command. Requires AWS CLI configured.
+
+```bash
+git clone https://github.com/shetty4l/engram.git
+cd engram
+./scripts/deploy-aws.sh
+```
+
+This will:
+- Launch a t3.small EC2 instance with Amazon Linux 2023
+- Install Bun and Engram automatically
+- Configure SSM for secure access (no public ports)
+- Output the MCP config to add to your client
+
+**Requirements:**
+- AWS CLI installed and configured (`aws configure` or `aws sso login`)
+- IAM permissions: EC2, IAM, SSM
+
+**Cost:** ~$15-20/month (t3.small + 10GB EBS). Stop the instance when not in use to save costs.
+
+**Cleanup:**
+```bash
+./scripts/destroy-aws.sh
+```
+
+The script creates `~/.engram/` with your key and instance info.
 
 ## OpenCode Setup
 
@@ -77,19 +118,6 @@ engram status
   - `engram status`
   - `engram restart`
   - `curl http://127.0.0.1:7749/health`
-
-Add to your MCP client config (e.g., OpenCode, Claude Desktop):
-
-```json
-{
-  "mcpServers": {
-    "engram": {
-      "command": "bun",
-      "args": ["run", "/path/to/engram/src/index.ts"]
-    }
-  }
-}
-```
 
 ## Tools
 
