@@ -11,7 +11,10 @@ import { forget } from "../src/tools/forget";
 import { remember } from "../src/tools/remember";
 
 describe("forget tool", () => {
+  const originalScopes = process.env.ENGRAM_ENABLE_SCOPES;
+
   beforeEach(() => {
+    process.env.ENGRAM_ENABLE_SCOPES = "0";
     resetDatabase();
     resetEmbedder();
     initDatabase(":memory:");
@@ -19,6 +22,12 @@ describe("forget tool", () => {
 
   afterEach(() => {
     closeDatabase();
+
+    if (originalScopes === undefined) {
+      delete process.env.ENGRAM_ENABLE_SCOPES;
+    } else {
+      process.env.ENGRAM_ENABLE_SCOPES = originalScopes;
+    }
   });
 
   test("deletes a stored memory", async () => {
@@ -47,5 +56,13 @@ describe("forget tool", () => {
     const summary = getMetricsSummary("session-forget");
     expect(summary.total_remembers).toBe(1);
     expect(summary.total_recalls).toBe(0);
+  });
+
+  test("requires scope_id when scopes are enabled", async () => {
+    process.env.ENGRAM_ENABLE_SCOPES = "1";
+
+    await expect(forget({ id: "missing-scope" })).rejects.toThrow(
+      "scope_id is required when scopes are enabled",
+    );
   });
 });

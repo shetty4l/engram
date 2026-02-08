@@ -13,7 +13,7 @@
     "build:cli": "bun build src/cli.ts --compile --outfile engram",
     "setup": "bun run scripts/setup.ts",
     "opencode:config": "bun run scripts/opencode-config.ts",
-    "test:core": "bun test test/db.test.ts test/cli.test.ts",
+    "test:core": "bun test test/db.test.ts test/cli.test.ts test/capabilities.test.ts test/http.test.ts",
     "test:full": "bun test",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src/",

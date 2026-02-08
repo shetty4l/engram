@@ -17,6 +17,12 @@ export interface Config {
     model: string;
     cacheDir: string;
   };
+  features: {
+    scopes: boolean;
+    idempotency: boolean;
+    contextHydration: boolean;
+    workItems: boolean;
+  };
 }
 
 function expandPath(path: string): string {
@@ -56,6 +62,12 @@ export function getConfig(): Config {
     embedding: {
       model: process.env.ENGRAM_EMBEDDING_MODEL || "Xenova/bge-small-en-v1.5",
       cacheDir: join(dataDir, "models"),
+    },
+    features: {
+      scopes: process.env.ENGRAM_ENABLE_SCOPES === "1",
+      idempotency: process.env.ENGRAM_ENABLE_IDEMPOTENCY === "1",
+      contextHydration: process.env.ENGRAM_ENABLE_CONTEXT_HYDRATION === "1",
+      workItems: process.env.ENGRAM_ENABLE_WORK_ITEMS === "1",
     },
   };
 }

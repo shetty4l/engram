@@ -2,6 +2,7 @@ import { getConfig } from "../config";
 import {
   getAllMemoriesWithEmbeddings,
   logMetric,
+  type MemoryFilters,
   searchMemories,
   updateMemoryAccess,
 } from "../db";
@@ -13,6 +14,10 @@ export interface RecallInput {
   category?: string;
   min_strength?: number;
   session_id?: string;
+  scope_id?: string;
+  chat_id?: string;
+  thread_id?: string;
+  task_id?: string;
 }
 
 export interface RecallMemory {
@@ -38,19 +43,27 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
   const config = getConfig();
   const limit = input.limit ?? config.memory.defaultRecallLimit;
   const minStrength = input.min_strength ?? config.memory.minStrength;
+  const filters: MemoryFilters = config.features.scopes
+    ? {
+        scope_id: input.scope_id,
+        chat_id: input.chat_id,
+        thread_id: input.thread_id,
+        task_id: input.task_id,
+      }
+    : {};
 
   // Empty query falls back to recent memories
   const isFallback = !input.query.trim();
   if (isFallback) {
-    return recallFallback(input, limit, minStrength);
+    return recallFallback(input, limit, minStrength, filters);
   }
 
   // Try semantic search first
-  const memoriesWithEmbeddings = getAllMemoriesWithEmbeddings();
+  const memoriesWithEmbeddings = getAllMemoriesWithEmbeddings(filters);
 
   if (memoriesWithEmbeddings.length === 0) {
     // No embeddings available, fall back to FTS5
-    return recallFTS5(input, limit, minStrength);
+    return recallFTS5(input, limit, minStrength, filters);
   }
 
   // Generate query embedding
@@ -103,8 +116,9 @@ function recallFTS5(
   input: RecallInput,
   limit: number,
   minStrength: number,
+  filters: MemoryFilters,
 ): RecallOutput {
-  let results = searchMemories(input.query, limit * 2);
+  let results = searchMemories(input.query, limit * 2, filters);
 
   // Filter by min_strength
   results = results.filter((m) => m.strength >= minStrength);
@@ -156,8 +170,9 @@ function recallFallback(
   input: RecallInput,
   limit: number,
   minStrength: number,
+  filters: MemoryFilters,
 ): RecallOutput {
-  let results = searchMemories("", limit * 2);
+  let results = searchMemories("", limit * 2, filters);
 
   // Filter by min_strength
   results = results.filter((m) => m.strength >= minStrength);
