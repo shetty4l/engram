@@ -11,7 +11,10 @@ import { recall } from "../src/tools/recall";
 import { remember } from "../src/tools/remember";
 
 describe("recall tool", () => {
+  const originalScopes = process.env.ENGRAM_ENABLE_SCOPES;
+
   beforeEach(() => {
+    process.env.ENGRAM_ENABLE_SCOPES = "0";
     resetDatabase();
     resetEmbedder();
     initDatabase(":memory:");
@@ -19,6 +22,12 @@ describe("recall tool", () => {
 
   afterEach(() => {
     closeDatabase();
+
+    if (originalScopes === undefined) {
+      delete process.env.ENGRAM_ENABLE_SCOPES;
+    } else {
+      process.env.ENGRAM_ENABLE_SCOPES = originalScopes;
+    }
   });
 
   test("returns empty array when no memories exist", async () => {
@@ -120,6 +129,18 @@ describe("recall tool", () => {
 
     expect(ids).toContain(keep.id);
     expect(ids).not.toContain(remove.id);
+  });
+
+  test("filters by scope when scopes feature is enabled", async () => {
+    process.env.ENGRAM_ENABLE_SCOPES = "1";
+
+    await remember({ content: "Project A memory", scope_id: "project-a" });
+    await remember({ content: "Project B memory", scope_id: "project-b" });
+
+    const result = await recall({ query: "memory", scope_id: "project-a" });
+
+    expect(result.memories).toHaveLength(1);
+    expect(result.memories[0].content).toBe("Project A memory");
   });
 
   // Semantic search behavior tests

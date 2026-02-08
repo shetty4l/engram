@@ -9,6 +9,12 @@ export interface Memory {
   id: string;
   content: string;
   category: string | null;
+  scope_id: string | null;
+  chat_id: string | null;
+  thread_id: string | null;
+  task_id: string | null;
+  metadata_json: string | null;
+  idempotency_key: string | null;
   created_at: string;
   updated_at: string;
   last_accessed: string;
@@ -21,7 +27,20 @@ export interface CreateMemoryInput {
   id: string;
   content: string;
   category?: string;
+  scope_id?: string;
+  chat_id?: string;
+  thread_id?: string;
+  task_id?: string;
+  metadata_json?: string;
+  idempotency_key?: string;
   embedding?: Buffer;
+}
+
+export interface MemoryFilters {
+  scope_id?: string;
+  chat_id?: string;
+  thread_id?: string;
+  task_id?: string;
 }
 
 function getSchemaSQL(): string {
@@ -33,16 +52,128 @@ function getSchemaSQL(): string {
  * Run migrations for existing databases.
  * Adds new columns that may not exist in older schemas.
  */
-function runMigrations(database: Database): void {
-  // Check if embedding column exists
-  const tableInfo = database.prepare("PRAGMA table_info(memories)").all() as {
+function hasColumn(database: Database, table: string, column: string): boolean {
+  const tableInfo = database.prepare(`PRAGMA table_info(${table})`).all() as {
     name: string;
   }[];
-  const hasEmbedding = tableInfo.some((col) => col.name === "embedding");
+  return tableInfo.some((col) => col.name === column);
+}
 
-  if (!hasEmbedding) {
-    database.exec("ALTER TABLE memories ADD COLUMN embedding BLOB");
+function hasCompositeIdempotencyPrimaryKey(database: Database): boolean {
+  const tableInfo = database
+    .prepare("PRAGMA table_info(idempotency_ledger)")
+    .all() as {
+    name: string;
+    pk: number;
+  }[];
+
+  const keyPrimary = tableInfo.find((column) => column.name === "key")?.pk;
+  const operationPrimary = tableInfo.find(
+    (column) => column.name === "operation",
+  )?.pk;
+  const scopeKeyPrimary = tableInfo.find(
+    (column) => column.name === "scope_key",
+  )?.pk;
+
+  return keyPrimary === 1 && operationPrimary === 2 && scopeKeyPrimary === 3;
+}
+
+function migrateIdempotencyLedger(database: Database): void {
+  const hasLedgerTable = database
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'idempotency_ledger'",
+    )
+    .get() as { name?: string } | null;
+
+  if (!hasLedgerTable || hasCompositeIdempotencyPrimaryKey(database)) {
+    return;
   }
+
+  database.exec(`
+    BEGIN;
+    CREATE TABLE idempotency_ledger_new (
+      key TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      scope_key TEXT NOT NULL,
+      scope_id TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      result_json TEXT NOT NULL,
+      PRIMARY KEY (key, operation, scope_key)
+    );
+    INSERT INTO idempotency_ledger_new (key, operation, scope_key, scope_id, created_at, result_json)
+    SELECT key, operation, COALESCE(scope_id, '__global__'), scope_id, created_at, result_json FROM idempotency_ledger;
+    DROP TABLE idempotency_ledger;
+    ALTER TABLE idempotency_ledger_new RENAME TO idempotency_ledger;
+    CREATE INDEX IF NOT EXISTS idx_idempotency_operation_scope
+      ON idempotency_ledger(operation, scope_key);
+    COMMIT;
+  `);
+}
+
+function normalizeScopeKey(scope_id: string | undefined): string {
+  return scope_id ?? "__global__";
+}
+
+function runMigrations(database: Database): void {
+  const memoryColumns: Array<{ name: string; definition: string }> = [
+    { name: "embedding", definition: "BLOB" },
+    { name: "scope_id", definition: "TEXT" },
+    { name: "chat_id", definition: "TEXT" },
+    { name: "thread_id", definition: "TEXT" },
+    { name: "task_id", definition: "TEXT" },
+    { name: "metadata_json", definition: "TEXT" },
+    { name: "idempotency_key", definition: "TEXT" },
+  ];
+
+  for (const column of memoryColumns) {
+    if (!hasColumn(database, "memories", column.name)) {
+      database.exec(
+        `ALTER TABLE memories ADD COLUMN ${column.name} ${column.definition}`,
+      );
+    }
+  }
+
+  // Ensure additive tables exist for old databases
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS idempotency_ledger (
+      key TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      scope_key TEXT NOT NULL,
+      scope_id TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      result_json TEXT NOT NULL,
+      PRIMARY KEY (key, operation, scope_key)
+    );
+    CREATE TABLE IF NOT EXISTS work_items (
+      id TEXT PRIMARY KEY,
+      scope_id TEXT,
+      state TEXT NOT NULL,
+      owner TEXT,
+      payload_json TEXT,
+      result_json TEXT,
+      lease_expires_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_work_items_state ON work_items(state);
+    CREATE INDEX IF NOT EXISTS idx_work_items_scope_state ON work_items(scope_id, state);
+    CREATE TABLE IF NOT EXISTS work_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      work_item_id TEXT NOT NULL,
+      event TEXT NOT NULL,
+      payload_json TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (work_item_id) REFERENCES work_items(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_work_events_work_item_id ON work_events(work_item_id);
+  `);
+
+  migrateIdempotencyLedger(database);
+
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_idempotency_operation_scope
+      ON idempotency_ledger(operation, scope_key);
+  `);
 }
 
 export function initDatabase(dbPath?: string): Database {
@@ -102,8 +233,14 @@ export function resetDatabase(): void {
 export function createMemory(input: CreateMemoryInput): Memory {
   const database = getDatabase();
   const stmt = database.prepare(`
-    INSERT INTO memories (id, content, category, embedding)
-    VALUES ($id, $content, $category, $embedding)
+    INSERT INTO memories (
+      id, content, category, scope_id, chat_id, thread_id, task_id,
+      metadata_json, idempotency_key, embedding
+    )
+    VALUES (
+      $id, $content, $category, $scope_id, $chat_id, $thread_id, $task_id,
+      $metadata_json, $idempotency_key, $embedding
+    )
     RETURNING *
   `);
 
@@ -111,6 +248,12 @@ export function createMemory(input: CreateMemoryInput): Memory {
     $id: input.id,
     $content: input.content,
     $category: input.category ?? null,
+    $scope_id: input.scope_id ?? null,
+    $chat_id: input.chat_id ?? null,
+    $thread_id: input.thread_id ?? null,
+    $task_id: input.task_id ?? null,
+    $metadata_json: input.metadata_json ?? null,
+    $idempotency_key: input.idempotency_key ?? null,
     $embedding: input.embedding ?? null,
   }) as Memory;
 }
@@ -121,14 +264,44 @@ export function getMemoryById(id: string): Memory | null {
   return (stmt.get({ $id: id }) as Memory) ?? null;
 }
 
-export function getAllMemories(limit: number = 10): Memory[] {
+function applyMemoryFilters(
+  filters: MemoryFilters,
+  clauses: string[],
+  params: Record<string, string | number>,
+): void {
+  if (filters.scope_id) {
+    clauses.push("scope_id = $scope_id");
+    params.$scope_id = filters.scope_id;
+  }
+  if (filters.chat_id) {
+    clauses.push("chat_id = $chat_id");
+    params.$chat_id = filters.chat_id;
+  }
+  if (filters.thread_id) {
+    clauses.push("thread_id = $thread_id");
+    params.$thread_id = filters.thread_id;
+  }
+  if (filters.task_id) {
+    clauses.push("task_id = $task_id");
+    params.$task_id = filters.task_id;
+  }
+}
+
+export function getAllMemories(
+  limit: number = 10,
+  filters: MemoryFilters = {},
+): Memory[] {
   const database = getDatabase();
-  const stmt = database.prepare(`
-    SELECT * FROM memories 
-    ORDER BY strength DESC, last_accessed DESC
-    LIMIT $limit
-  `);
-  return stmt.all({ $limit: limit }) as Memory[];
+  const clauses: string[] = [];
+  const params: Record<string, string | number> = { $limit: limit };
+  applyMemoryFilters(filters, clauses, params);
+  const whereClause =
+    clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+
+  const stmt = database.prepare(
+    `SELECT * FROM memories ${whereClause} ORDER BY strength DESC, last_accessed DESC LIMIT $limit`,
+  );
+  return stmt.all(params) as Memory[];
 }
 
 export function updateMemoryAccess(id: string): void {
@@ -142,8 +315,16 @@ export function updateMemoryAccess(id: string): void {
   stmt.run({ $id: id });
 }
 
-export function deleteMemoryById(id: string): boolean {
+export function deleteMemoryById(id: string, scope_id?: string): boolean {
   const database = getDatabase();
+  if (scope_id) {
+    const scopedStmt = database.prepare(
+      "DELETE FROM memories WHERE id = $id AND scope_id = $scope_id",
+    );
+    const scopedResult = scopedStmt.run({ $id: id, $scope_id: scope_id });
+    return scopedResult.changes > 0;
+  }
+
   const stmt = database.prepare("DELETE FROM memories WHERE id = $id");
   const result = stmt.run({ $id: id });
   return result.changes > 0;
@@ -160,14 +341,26 @@ export interface SearchResult extends Memory {
   rank: number;
 }
 
-export function searchMemories(query: string, limit: number): SearchResult[] {
+export function searchMemories(
+  query: string,
+  limit: number,
+  filters: MemoryFilters = {},
+): SearchResult[] {
   const database = getDatabase();
 
   // Empty query falls back to recent memories by strength
   if (!query.trim()) {
-    const memories = getAllMemories(limit);
+    const memories = getAllMemories(limit, filters);
     return memories.map((m) => ({ ...m, rank: 0 }));
   }
+
+  const clauses: string[] = [];
+  const params: Record<string, string | number> = {
+    $query: query,
+    $limit: limit,
+  };
+  applyMemoryFilters(filters, clauses, params);
+  const whereClause = clauses.length > 0 ? `AND ${clauses.join(" AND ")}` : "";
 
   // FTS5 search with BM25 ranking (lower rank = better match)
   const stmt = database.prepare(`
@@ -175,11 +368,12 @@ export function searchMemories(query: string, limit: number): SearchResult[] {
     FROM memories_fts fts
     JOIN memories m ON m.rowid = fts.rowid
     WHERE memories_fts MATCH $query
+    ${whereClause}
     ORDER BY rank, m.strength DESC, m.last_accessed DESC
     LIMIT $limit
   `);
 
-  return stmt.all({ $query: query, $limit: limit }) as SearchResult[];
+  return stmt.all(params) as SearchResult[];
 }
 
 // Metrics functions
@@ -328,6 +522,10 @@ export interface MemoryWithEmbedding {
   id: string;
   content: string;
   category: string | null;
+  scope_id: string | null;
+  chat_id: string | null;
+  thread_id: string | null;
+  task_id: string | null;
   strength: number;
   created_at: string;
   access_count: number;
@@ -337,14 +535,18 @@ export interface MemoryWithEmbedding {
 /**
  * Get all memories with embeddings for semantic search.
  */
-export function getAllMemoriesWithEmbeddings(): MemoryWithEmbedding[] {
+export function getAllMemoriesWithEmbeddings(
+  filters: MemoryFilters = {},
+): MemoryWithEmbedding[] {
   const database = getDatabase();
-  const stmt = database.prepare(`
-    SELECT id, content, category, strength, created_at, access_count, embedding
-    FROM memories
-    WHERE embedding IS NOT NULL
-  `);
-  return stmt.all() as MemoryWithEmbedding[];
+  const clauses: string[] = ["embedding IS NOT NULL"];
+  const params: Record<string, string> = {};
+  applyMemoryFilters(filters, clauses, params);
+  const whereClause = `WHERE ${clauses.join(" AND ")}`;
+  const stmt = database.prepare(
+    `SELECT id, content, category, scope_id, chat_id, thread_id, task_id, strength, created_at, access_count, embedding FROM memories ${whereClause}`,
+  );
+  return stmt.all(params) as MemoryWithEmbedding[];
 }
 
 /**
@@ -392,4 +594,52 @@ export function countEmbeddingStatus(): {
     with_embedding: withEmbed.count,
     without_embedding: withoutEmbed.count,
   };
+}
+
+export function getIdempotencyResult<T>(
+  key: string,
+  operation: string,
+  scope_id?: string,
+): T | null {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    SELECT result_json
+    FROM idempotency_ledger
+    WHERE key = $key AND operation = $operation AND scope_key = $scope_key
+  `);
+  const row = stmt.get({
+    $key: key,
+    $operation: operation,
+    $scope_key: normalizeScopeKey(scope_id),
+  }) as { result_json: string } | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(row.result_json) as T;
+  } catch {
+    return null;
+  }
+}
+
+export function saveIdempotencyResult(
+  key: string,
+  operation: string,
+  scope_id: string | undefined,
+  result: unknown,
+): void {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    INSERT OR REPLACE INTO idempotency_ledger (key, operation, scope_key, scope_id, result_json)
+    VALUES ($key, $operation, $scope_key, $scope_id, $result_json)
+  `);
+  stmt.run({
+    $key: key,
+    $operation: operation,
+    $scope_key: normalizeScopeKey(scope_id),
+    $scope_id: scope_id ?? null,
+    $result_json: JSON.stringify(result),
+  });
 }
