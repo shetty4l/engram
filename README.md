@@ -179,6 +179,38 @@ When users ask to forget by phrase (for example, "forget the memory about API ke
 the assistant should first call `recall` to resolve candidates, then call `forget`
 with the selected memory ID.
 
+## Memory Decay
+
+Memories decay in strength over time when not accessed, helping prioritize relevant knowledge:
+
+- **Decay rate**: 0.95 per day (~50% strength after 14 days without access)
+- **Access boost**: Accessing a memory resets its strength to 1.0
+- **Access count boost**: Frequently-accessed memories get a log-scale bonus
+
+### CLI Commands
+
+```bash
+# View decay status for all memories
+engram decay
+
+# Apply decayed strengths to database
+engram decay --apply
+
+# Preview what would be pruned (dry run)
+engram prune --threshold=0.1 --dry-run
+
+# Delete memories below threshold
+engram prune --threshold=0.1
+```
+
+### Configuration
+
+Override defaults with environment variables:
+```bash
+ENGRAM_DECAY_RATE=0.95              # Daily decay multiplier (default: 0.95)
+ENGRAM_ACCESS_BOOST_STRENGTH=1.0    # Strength after access (default: 1.0)
+```
+
 ## Configuration
 
 Database location: `~/.local/share/engram/engram.db`
@@ -232,11 +264,13 @@ and continues. Any real test failures still fail CI.
 
 ## Roadmap
 
-- **Slice 1** (current): Basic CRUD with strength/recency ordering
-- **Slice 2**: Semantic search with embeddings (Ollama + sqlite-vec)
-- **Slice 3**: Deduplication, merging, decay algorithm
-- **Slice 4**: Conflict detection and resolution (`reflect` tool)
-- **Slice 5**: Export/import for portability
+- **Slice 1** ✅: Basic CRUD with strength/recency ordering
+- **Slice 2** ✅: Full-text search with FTS5
+- **Slice 3** ✅: HTTP server and daemon
+- **Slice 4** ✅: Semantic search with local embeddings
+- **Slice 5** ✅: Memory decay algorithm
+- **Slice 6**: Deduplication and conflict detection
+- **Slice 7**: Export/import for portability
 
 ## License
 
