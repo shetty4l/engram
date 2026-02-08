@@ -313,14 +313,16 @@ export function getAllMemories(
 }
 
 export function updateMemoryAccess(id: string): void {
+  const config = getConfig();
   const database = getDatabase();
   const stmt = database.prepare(`
     UPDATE memories 
     SET last_accessed = datetime('now'),
-        access_count = access_count + 1
+        access_count = access_count + 1,
+        strength = $strength
     WHERE id = $id
   `);
-  stmt.run({ $id: id });
+  stmt.run({ $id: id, $strength: config.decay.accessBoostStrength });
 }
 
 export function deleteMemoryById(id: string, scope_id?: string): boolean {
@@ -536,6 +538,7 @@ export interface MemoryWithEmbedding {
   task_id: string | null;
   strength: number;
   created_at: string;
+  last_accessed: string;
   access_count: number;
   embedding: Buffer | null;
 }
@@ -552,7 +555,7 @@ export function getAllMemoriesWithEmbeddings(
   applyMemoryFilters(filters, clauses, params);
   const whereClause = `WHERE ${clauses.join(" AND ")}`;
   const stmt = database.prepare(
-    `SELECT id, content, category, scope_id, chat_id, thread_id, task_id, strength, created_at, access_count, embedding FROM memories ${whereClause}`,
+    `SELECT id, content, category, scope_id, chat_id, thread_id, task_id, strength, created_at, last_accessed, access_count, embedding FROM memories ${whereClause}`,
   );
   return stmt.all(params) as MemoryWithEmbedding[];
 }
@@ -650,4 +653,80 @@ export function saveIdempotencyResult(
     $scope_id: scope_id ?? null,
     $result_json: JSON.stringify(result),
   });
+}
+
+// Decay-related functions
+
+/**
+ * Update a memory's strength value.
+ */
+export function updateMemoryStrength(id: string, strength: number): void {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    UPDATE memories SET strength = $strength WHERE id = $id
+  `);
+  stmt.run({ $id: id, $strength: strength });
+}
+
+/**
+ * Get all memories for decay calculation.
+ */
+export function getAllMemoriesForDecay(): {
+  id: string;
+  content: string;
+  category: string | null;
+  last_accessed: string;
+  access_count: number;
+  strength: number;
+}[] {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    SELECT id, content, category, last_accessed, access_count, strength
+    FROM memories
+    ORDER BY strength DESC
+  `);
+  return stmt.all() as {
+    id: string;
+    content: string;
+    category: string | null;
+    last_accessed: string;
+    access_count: number;
+    strength: number;
+  }[];
+}
+
+/**
+ * Delete memories below a strength threshold.
+ * Returns the number of memories deleted.
+ */
+export function pruneMemoriesBelowStrength(threshold: number): number {
+  const database = getDatabase();
+
+  // First count how many will be deleted (changes includes FTS trigger changes)
+  const countStmt = database.prepare(
+    "SELECT COUNT(*) as count FROM memories WHERE strength < $threshold",
+  );
+  const { count } = countStmt.get({ $threshold: threshold }) as {
+    count: number;
+  };
+
+  // Then delete
+  const deleteStmt = database.prepare(
+    "DELETE FROM memories WHERE strength < $threshold",
+  );
+  deleteStmt.run({ $threshold: threshold });
+
+  return count;
+}
+
+/**
+ * Get memories below a strength threshold (for dry-run).
+ */
+export function getMemoriesBelowStrength(threshold: number): Memory[] {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    SELECT * FROM memories WHERE strength < $threshold
+    ORDER BY strength ASC
+  `);
+  return stmt.all({ $threshold: threshold }) as Memory[];
 }
