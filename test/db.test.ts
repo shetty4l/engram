@@ -128,6 +128,67 @@ describe("Database", () => {
     expect(afterDelete.map((m) => m.id)).not.toContain("search-1");
   });
 
+  test("migrates legacy memories schema before creating scoped indexes", () => {
+    closeDatabase();
+    resetDatabase();
+
+    const tempDir = mkdtempSync(join(tmpdir(), "engram-db-test-"));
+    const dbPath = join(tempDir, "legacy-memories.db");
+
+    const legacyDb = new Database(dbPath);
+    legacyDb.exec(`
+      CREATE TABLE memories (
+        id TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        category TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        last_accessed TEXT DEFAULT (datetime('now')),
+        access_count INTEGER DEFAULT 1,
+        strength REAL DEFAULT 1.0,
+        embedding BLOB
+      );
+      CREATE INDEX idx_memories_strength ON memories(strength);
+      CREATE INDEX idx_memories_last_accessed ON memories(last_accessed);
+    `);
+    legacyDb.close();
+
+    initDatabase(dbPath);
+
+    const memoryColumns = getDatabase()
+      .prepare("PRAGMA table_info(memories)")
+      .all() as { name: string }[];
+
+    expect(memoryColumns.some((col) => col.name === "scope_id")).toBe(true);
+    expect(memoryColumns.some((col) => col.name === "chat_id")).toBe(true);
+    expect(memoryColumns.some((col) => col.name === "thread_id")).toBe(true);
+    expect(memoryColumns.some((col) => col.name === "task_id")).toBe(true);
+    expect(memoryColumns.some((col) => col.name === "metadata_json")).toBe(
+      true,
+    );
+    expect(memoryColumns.some((col) => col.name === "idempotency_key")).toBe(
+      true,
+    );
+
+    const memoryIndexes = getDatabase()
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'memories'",
+      )
+      .all() as { name: string }[];
+    const indexNames = memoryIndexes.map((index) => index.name);
+
+    expect(indexNames).toContain("idx_memories_scope_id");
+    expect(indexNames).toContain("idx_memories_chat_id");
+    expect(indexNames).toContain("idx_memories_thread_id");
+    expect(indexNames).toContain("idx_memories_task_id");
+    expect(indexNames).toContain("idx_memories_idempotency_key");
+
+    closeDatabase();
+    resetDatabase();
+    rmSync(tempDir, { recursive: true, force: true });
+    initDatabase(":memory:");
+  });
+
   test("migrates legacy idempotency ledger to scoped primary key", () => {
     closeDatabase();
     resetDatabase();
