@@ -28,8 +28,8 @@ export function calculateDecayedStrength(
   const msSinceAccess = now.getTime() - lastAccessDate.getTime();
   const daysSinceAccess = msSinceAccess / (1000 * 60 * 60 * 24);
 
-  // Don't decay if accessed today (or in the future due to clock skew)
-  if (daysSinceAccess <= 0) {
+  // Don't decay if accessed very recently (< ~1.4 minutes) or in the future (clock skew)
+  if (daysSinceAccess < 0.001) {
     return Math.min(baseStrength, 1.0);
   }
 
