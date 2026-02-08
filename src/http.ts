@@ -5,13 +5,20 @@
  * - POST /remember - Store a memory
  * - POST /recall - Retrieve memories
  * - POST /forget - Delete a memory by ID
+ * - POST /context/hydrate - Hydrate assistant context (feature-flagged)
+ * - GET /capabilities - Feature discovery
  * - GET /health - Health check
  *
  * Used by OpenCode plugin for silent memory extraction.
  */
 
+import { getCapabilities } from "./capabilities";
 import { getConfig } from "./config";
 import { initDatabase } from "./db";
+import {
+  type ContextHydrateInput,
+  contextHydrate,
+} from "./tools/context-hydrate";
 import { type ForgetInput, forget } from "./tools/forget";
 import { type RecallInput, recall } from "./tools/recall";
 import { type RememberInput, remember } from "./tools/remember";
@@ -76,6 +83,10 @@ async function handleRequest(req: Request): Promise<Response> {
       );
     }
 
+    if (path === "/capabilities" && method === "GET") {
+      return Response.json(getCapabilities(VERSION), { headers });
+    }
+
     // Remember endpoint
     if (path === "/remember" && method === "POST") {
       const body = (await req.json()) as RememberInput;
@@ -109,6 +120,7 @@ async function handleRequest(req: Request): Promise<Response> {
     // Forget endpoint
     if (path === "/forget" && method === "POST") {
       const body = (await req.json()) as ForgetInput;
+      const featureConfig = getConfig();
 
       if (!body.id) {
         return Response.json(
@@ -117,7 +129,28 @@ async function handleRequest(req: Request): Promise<Response> {
         );
       }
 
+      if (featureConfig.features.scopes && !body.scope_id) {
+        return Response.json(
+          { error: "scope_id is required when scopes are enabled" },
+          { status: 400, headers },
+        );
+      }
+
       const result = await forget(body);
+      return Response.json(result, { headers });
+    }
+
+    if (path === "/context/hydrate" && method === "POST") {
+      const featureConfig = getConfig();
+      if (!featureConfig.features.contextHydration) {
+        return Response.json(
+          { error: "context hydration is disabled" },
+          { status: 403, headers },
+        );
+      }
+
+      const body = (await req.json()) as ContextHydrateInput;
+      const result = await contextHydrate(body);
       return Response.json(result, { headers });
     }
 

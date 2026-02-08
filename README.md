@@ -132,6 +132,9 @@ remember({ content: "User prefers TypeScript over JavaScript", category: "prefer
 **Parameters:**
 - `content` (required): The memory content
 - `category` (optional): `decision`, `pattern`, `fact`, `preference`, `insight`
+- `scope_id`, `chat_id`, `thread_id`, `task_id` (optional): Scope filters for isolation (feature-flagged)
+- `metadata` (optional): Structured metadata object
+- `idempotency_key` (optional): Safe retry key (feature-flagged)
 
 ### `recall`
 
@@ -146,6 +149,7 @@ recall({ query: "coding preferences", limit: 5 })
 - `limit` (optional): Max results (default: 10)
 - `category` (optional): Filter by category
 - `min_strength` (optional): Minimum strength threshold (0.0-1.0)
+- `scope_id`, `chat_id`, `thread_id`, `task_id` (optional): Scope filters (feature-flagged)
 
 ### `forget`
 
@@ -157,10 +161,19 @@ forget({ id: "memory-uuid" })
 
 **Parameters:**
 - `id` (required): Memory ID to delete
+- `scope_id` (optional): Scope guard for deletion (required when `ENGRAM_ENABLE_SCOPES=1`)
 
 **Returns:**
 - `id`: Requested memory ID
 - `deleted`: `true` if a memory was deleted, `false` if it did not exist
+
+### `capabilities`
+
+Discover server version and feature flags for compatibility-safe client opt-in.
+
+### `context_hydrate`
+
+Retrieve contextual memories for assistant turns. Behavior mirrors `recall`, with `query` optional.
 
 When users ask to forget by phrase (for example, "forget the memory about API keys"),
 the assistant should first call `recall` to resolve candidates, then call `forget`
@@ -173,6 +186,14 @@ Database location: `~/.local/share/engram/engram.db`
 Override with environment variable:
 ```bash
 ENGRAM_DB_PATH=/custom/path/engram.db
+```
+
+Feature flags (all default to disabled):
+```bash
+ENGRAM_ENABLE_SCOPES=1
+ENGRAM_ENABLE_IDEMPOTENCY=1
+ENGRAM_ENABLE_CONTEXT_HYDRATION=1
+ENGRAM_ENABLE_WORK_ITEMS=1
 ```
 
 ## Development

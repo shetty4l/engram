@@ -1,13 +1,20 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import {
   closeDatabase,
   countMemories,
   createMemory,
   deleteMemoryById,
   getAllMemories,
+  getDatabase,
+  getIdempotencyResult,
   getMemoryById,
   initDatabase,
   resetDatabase,
+  saveIdempotencyResult,
   searchMemories,
   updateMemoryAccess,
 } from "../src/db";
@@ -119,5 +126,78 @@ describe("Database", () => {
 
     const afterDelete = searchMemories("budget", 10);
     expect(afterDelete.map((m) => m.id)).not.toContain("search-1");
+  });
+
+  test("migrates legacy idempotency ledger to scoped primary key", () => {
+    closeDatabase();
+    resetDatabase();
+
+    const tempDir = mkdtempSync(join(tmpdir(), "engram-db-test-"));
+    const dbPath = join(tempDir, "legacy.db");
+
+    const legacyDb = new Database(dbPath);
+    legacyDb.exec(`
+      CREATE TABLE idempotency_ledger (
+        key TEXT PRIMARY KEY,
+        operation TEXT NOT NULL,
+        scope_id TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        result_json TEXT NOT NULL
+      );
+      INSERT INTO idempotency_ledger (key, operation, scope_id, result_json)
+      VALUES ('legacy-key', 'remember', 'legacy-scope', '{"id":"legacy"}');
+    `);
+    legacyDb.close();
+
+    initDatabase(dbPath);
+
+    const pkInfo = getDatabase()
+      .prepare("PRAGMA table_info(idempotency_ledger)")
+      .all() as { name: string; pk: number }[];
+
+    expect(pkInfo.find((col) => col.name === "key")?.pk).toBe(1);
+    expect(pkInfo.find((col) => col.name === "operation")?.pk).toBe(2);
+    expect(pkInfo.find((col) => col.name === "scope_key")?.pk).toBe(3);
+
+    saveIdempotencyResult("legacy-key", "remember", "legacy-scope", {
+      id: "updated",
+    });
+
+    const migrated = getDatabase()
+      .prepare(
+        "SELECT scope_key, scope_id FROM idempotency_ledger WHERE key = 'legacy-key' AND operation = 'remember'",
+      )
+      .get() as { scope_key: string; scope_id: string | null };
+
+    expect(migrated.scope_key).toBe("legacy-scope");
+    expect(migrated.scope_id).toBe("legacy-scope");
+
+    closeDatabase();
+    resetDatabase();
+    rmSync(tempDir, { recursive: true, force: true });
+    initDatabase(":memory:");
+  });
+
+  test("keeps idempotency results isolated by scope", () => {
+    saveIdempotencyResult("shared-key", "remember", "scope-a", {
+      id: "memory-a",
+    });
+    saveIdempotencyResult("shared-key", "remember", "scope-b", {
+      id: "memory-b",
+    });
+
+    const scopeA = getIdempotencyResult<{ id: string }>(
+      "shared-key",
+      "remember",
+      "scope-a",
+    );
+    const scopeB = getIdempotencyResult<{ id: string }>(
+      "shared-key",
+      "remember",
+      "scope-b",
+    );
+
+    expect(scopeA?.id).toBe("memory-a");
+    expect(scopeB?.id).toBe("memory-b");
   });
 });
