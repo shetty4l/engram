@@ -417,12 +417,15 @@ Development follows vertical slices - each slice delivers working end-to-end fun
 - [x] Async `remember`/`recall` for embedding generation
 - [x] Database migration for existing databases
 
-### Slice 5: Memory Lifecycle (Future)
+### Slice 5: Memory Lifecycle ✅
 **Goal:** Memory decay and management
 
-- [ ] Decay algorithm (strength reduces over time without access)
-- [ ] Strength boost on access
-- [ ] Prune low-strength memories (CLI or automatic)
+- [x] Decay algorithm (strength reduces over time without access)
+- [x] Strength boost on access
+- [x] Prune low-strength memories (CLI command)
+- [x] `engram decay` CLI command to view/apply decay
+- [x] `engram prune` CLI command with --dry-run option
+- [x] Configurable decay rate via environment variables
 
 ### Slice 6: Memory Intelligence (Future)
 **Goal:** Deduplication and conflict handling

@@ -9,6 +9,12 @@ export interface Config {
     defaultRecallLimit: number;
     minStrength: number;
   };
+  decay: {
+    /** Daily decay rate (0.95 = 5% decay per day) */
+    rate: number;
+    /** Strength to set when a memory is accessed */
+    accessBoostStrength: number;
+  };
   http: {
     port: number;
     host: string;
@@ -52,6 +58,14 @@ export function getConfig(): Config {
     memory: {
       defaultRecallLimit: 10,
       minStrength: 0.1,
+    },
+    decay: {
+      rate: process.env.ENGRAM_DECAY_RATE
+        ? parseFloat(process.env.ENGRAM_DECAY_RATE)
+        : 0.95,
+      accessBoostStrength: process.env.ENGRAM_ACCESS_BOOST_STRENGTH
+        ? parseFloat(process.env.ENGRAM_ACCESS_BOOST_STRENGTH)
+        : 1.0,
     },
     http: {
       port: process.env.ENGRAM_HTTP_PORT

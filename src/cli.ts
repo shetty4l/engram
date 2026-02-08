@@ -10,6 +10,8 @@
  *   engram metrics         Show usage metrics
  *   engram show <id>       Show a specific memory
  *   engram forget <id>     Delete a specific memory
+ *   engram decay           Show decay status for all memories
+ *   engram prune [opts]    Delete weak memories (--threshold=0.1 --dry-run)
  *
  *   engram serve           Start HTTP server (foreground)
  *   engram start           Start HTTP server as daemon
@@ -30,13 +32,18 @@ import {
 } from "./daemon";
 import {
   deleteMemoryById,
+  getAllMemoriesForDecay,
+  getMemoriesBelowStrength,
   getMemoryById,
   getMetricsSummary,
   getRecentMemories,
   getStats,
   initDatabase,
+  pruneMemoriesBelowStrength,
   searchMemories,
+  updateMemoryStrength,
 } from "./db";
+import { calculateDecayedStrength, daysSince } from "./db/decay";
 import { startHttpServer } from "./http";
 
 const HELP = `
@@ -49,6 +56,8 @@ Usage:
   engram metrics         Show usage metrics
   engram show <id>       Show a specific memory
   engram forget <id>     Delete a specific memory
+  engram decay           Show decay status for all memories
+  engram prune [opts]    Delete weak memories (--threshold=0.1 --dry-run)
 
   engram serve           Start HTTP server (foreground)
   engram start           Start HTTP server as daemon
@@ -258,6 +267,185 @@ function cmdForget(id: string | undefined, json: boolean): void {
   console.log(`Deleted memory: ${id}`);
 }
 
+function cmdDecay(args: string[], json: boolean): void {
+  const memories = getAllMemoriesForDecay();
+
+  if (memories.length === 0) {
+    if (json) {
+      console.log(JSON.stringify({ memories: [], updated: 0 }, null, 2));
+    } else {
+      console.log("\nNo memories found.\n");
+    }
+    return;
+  }
+
+  // Calculate decay for each memory
+  const decayInfo = memories.map((m) => {
+    const decayedStrength = calculateDecayedStrength(
+      m.last_accessed,
+      m.access_count,
+      m.strength,
+    );
+    const days = daysSince(m.last_accessed);
+    return {
+      id: m.id,
+      content: m.content,
+      category: m.category,
+      stored_strength: m.strength,
+      decayed_strength: decayedStrength,
+      days_since_access: days,
+      access_count: m.access_count,
+      needs_update: Math.abs(m.strength - decayedStrength) > 0.001,
+    };
+  });
+
+  // Check if --apply flag is present
+  const shouldApply = args.includes("--apply");
+
+  if (json) {
+    console.log(
+      JSON.stringify(
+        {
+          memories: decayInfo,
+          needs_update: decayInfo.filter((m) => m.needs_update).length,
+          applied: shouldApply,
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    console.log("\n=== Memory Decay Status ===\n");
+
+    for (const m of decayInfo) {
+      const changeStr =
+        m.stored_strength !== m.decayed_strength
+          ? ` → ${m.decayed_strength.toFixed(3)}`
+          : "";
+      const staleStr = m.needs_update ? " (stale)" : "";
+      console.log(
+        `[${m.id.slice(0, 8)}] strength: ${m.stored_strength.toFixed(3)}${changeStr}${staleStr}`,
+      );
+      console.log(
+        `  ${truncate(m.content, 50)} (${m.days_since_access.toFixed(1)}d ago, ${m.access_count} accesses)`,
+      );
+    }
+
+    const staleCount = decayInfo.filter((m) => m.needs_update).length;
+    console.log(
+      `\nTotal: ${memories.length} memories, ${staleCount} need update`,
+    );
+
+    if (!shouldApply && staleCount > 0) {
+      console.log("\nRun 'engram decay --apply' to persist decayed strengths.");
+    }
+  }
+
+  // Apply decay if requested
+  if (shouldApply) {
+    let updated = 0;
+    for (const m of decayInfo) {
+      if (m.needs_update) {
+        updateMemoryStrength(m.id, m.decayed_strength);
+        updated++;
+      }
+    }
+    if (!json) {
+      console.log(`\nUpdated ${updated} memories with decayed strengths.`);
+    }
+  }
+}
+
+function cmdPrune(args: string[], json: boolean): void {
+  // Parse options
+  const dryRun = args.includes("--dry-run");
+  const thresholdArg = args.find((a) => a.startsWith("--threshold="));
+  const threshold = thresholdArg ? parseFloat(thresholdArg.split("=")[1]) : 0.1;
+
+  if (Number.isNaN(threshold) || threshold < 0 || threshold > 1) {
+    console.error("Error: threshold must be a number between 0 and 1");
+    process.exit(1);
+  }
+
+  // First, apply decay to all memories so we're working with current values
+  // (skip on dry-run to avoid side effects)
+  const memories = getAllMemoriesForDecay();
+  if (!dryRun) {
+    for (const m of memories) {
+      const decayedStrength = calculateDecayedStrength(
+        m.last_accessed,
+        m.access_count,
+        m.strength,
+      );
+      if (Math.abs(m.strength - decayedStrength) > 0.001) {
+        updateMemoryStrength(m.id, decayedStrength);
+      }
+    }
+  }
+
+  // For dry-run, calculate what decay WOULD produce without persisting
+  const effectiveMemories = dryRun
+    ? memories.map((m) => ({
+        ...m,
+        strength: calculateDecayedStrength(
+          m.last_accessed,
+          m.access_count,
+          m.strength,
+        ),
+      }))
+    : memories;
+
+  // Now find memories below threshold
+  const toPrune = dryRun
+    ? effectiveMemories.filter((m) => m.strength < threshold)
+    : getMemoriesBelowStrength(threshold);
+
+  if (json) {
+    const result = {
+      threshold,
+      dry_run: dryRun,
+      count: toPrune.length,
+      memories: toPrune.map((m) => ({
+        id: m.id,
+        content: truncate(m.content, 100),
+        category: m.category,
+        strength: m.strength,
+      })),
+      deleted: dryRun ? 0 : toPrune.length,
+    };
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    console.log(`\n=== Prune Memories (threshold: ${threshold}) ===\n`);
+
+    if (toPrune.length === 0) {
+      console.log("No memories below threshold.\n");
+      return;
+    }
+
+    for (const m of toPrune) {
+      console.log(
+        `[${m.id.slice(0, 8)}] strength: ${m.strength.toFixed(3)} (${m.category ?? "none"})`,
+      );
+      console.log(`  ${truncate(m.content, 60)}`);
+    }
+
+    console.log(`\nFound ${toPrune.length} memories below threshold.`);
+
+    if (dryRun) {
+      console.log("Dry run - no memories deleted.");
+      console.log("Run without --dry-run to delete these memories.");
+    }
+  }
+
+  // Actually delete if not dry run
+  if (!dryRun && toPrune.length > 0) {
+    const deleted = pruneMemoriesBelowStrength(threshold);
+    if (!json) {
+      console.log(`\nDeleted ${deleted} memories.`);
+    }
+  }
+}
+
 function cmdServe(): void {
   console.log("Starting Engram HTTP server...");
   const server = startHttpServer();
@@ -375,6 +563,12 @@ async function main(): Promise<void> {
       break;
     case "forget":
       cmdForget(args[0], json);
+      break;
+    case "decay":
+      cmdDecay(args, json);
+      break;
+    case "prune":
+      cmdPrune(args, json);
       break;
     case "help":
       console.log(HELP);

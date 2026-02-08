@@ -6,6 +6,7 @@ import {
   searchMemories,
   updateMemoryAccess,
 } from "../db";
+import { calculateDecayedStrength } from "../db/decay";
 import { bufferToEmbedding, cosineSimilarity, embed } from "../embedding";
 
 export interface RecallInput {
@@ -70,26 +71,35 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
   const queryEmbedding = await embed(input.query);
 
   // Compute similarity for all memories with embeddings
-  const scoredMemories = memoriesWithEmbeddings
-    .map((m) => {
-      const memoryEmbedding = bufferToEmbedding(m.embedding!);
-      const similarity = cosineSimilarity(queryEmbedding, memoryEmbedding);
-      return {
-        id: m.id,
-        content: m.content,
-        category: m.category,
-        strength: m.strength,
-        relevance: similarity,
-        created_at: m.created_at,
-        access_count: m.access_count,
-      };
-    })
+  // Apply decay to strength before filtering
+  const allDecayed = memoriesWithEmbeddings.map((m) => {
+    const memoryEmbedding = bufferToEmbedding(m.embedding!);
+    const similarity = cosineSimilarity(queryEmbedding, memoryEmbedding);
+    const decayedStrength = calculateDecayedStrength(
+      m.last_accessed,
+      m.access_count,
+      m.strength,
+    );
+    return {
+      id: m.id,
+      content: m.content,
+      category: m.category,
+      strength: decayedStrength,
+      relevance: similarity,
+      created_at: m.created_at,
+      access_count: m.access_count,
+    };
+  });
+
+  const scoredMemories = allDecayed
     .filter((m) => m.strength >= minStrength)
     .filter((m) => !input.category || m.category === input.category)
     .sort((a, b) => b.relevance - a.relevance)
     .slice(0, limit);
 
-  // Update access patterns for returned memories
+  // Update access patterns for returned memories (boosts strength to 1.0)
+  // Non-returned memories are NOT mutated — decay is computed on-the-fly
+  // from last_accessed, so persisting would cause double-decay.
   for (const memory of scoredMemories) {
     updateMemoryAccess(memory.id);
   }
@@ -120,29 +130,39 @@ function recallFTS5(
 ): RecallOutput {
   let results = searchMemories(input.query, limit * 2, filters);
 
-  // Filter by min_strength
-  results = results.filter((m) => m.strength >= minStrength);
+  // Apply decay and filter by min_strength
+  const decayedResults = results.map((m) => ({
+    ...m,
+    decayedStrength: calculateDecayedStrength(
+      m.last_accessed,
+      m.access_count,
+      m.strength,
+    ),
+  }));
+
+  let filtered = decayedResults.filter((m) => m.decayedStrength >= minStrength);
 
   // Filter by category if provided
   if (input.category) {
-    results = results.filter((m) => m.category === input.category);
+    filtered = filtered.filter((m) => m.category === input.category);
   }
 
   // Apply limit
-  results = results.slice(0, limit);
+  filtered = filtered.slice(0, limit);
 
-  // Update access patterns
-  for (const memory of results) {
+  // Update access patterns (boosts strength to 1.0)
+  // Non-returned memories are NOT mutated — decay is ephemeral.
+  for (const memory of filtered) {
     updateMemoryAccess(memory.id);
   }
 
   // Transform to output format
   // BM25 returns negative scores (closer to 0 = better match)
-  const memories: RecallMemory[] = results.map((m) => ({
+  const memories: RecallMemory[] = filtered.map((m) => ({
     id: m.id,
     content: m.content,
     category: m.category,
-    strength: m.strength,
+    strength: m.decayedStrength,
     relevance: Math.exp(m.rank), // e^rank normalizes BM25
     created_at: m.created_at,
     access_count: m.access_count,
@@ -174,28 +194,38 @@ function recallFallback(
 ): RecallOutput {
   let results = searchMemories("", limit * 2, filters);
 
-  // Filter by min_strength
-  results = results.filter((m) => m.strength >= minStrength);
+  // Apply decay and filter by min_strength
+  const decayedResults = results.map((m) => ({
+    ...m,
+    decayedStrength: calculateDecayedStrength(
+      m.last_accessed,
+      m.access_count,
+      m.strength,
+    ),
+  }));
+
+  let filtered = decayedResults.filter((m) => m.decayedStrength >= minStrength);
 
   // Filter by category if provided
   if (input.category) {
-    results = results.filter((m) => m.category === input.category);
+    filtered = filtered.filter((m) => m.category === input.category);
   }
 
   // Apply limit
-  results = results.slice(0, limit);
+  filtered = filtered.slice(0, limit);
 
-  // Update access patterns
-  for (const memory of results) {
+  // Update access patterns (boosts strength to 1.0)
+  // Non-returned memories are NOT mutated — decay is ephemeral.
+  for (const memory of filtered) {
     updateMemoryAccess(memory.id);
   }
 
-  const memories: RecallMemory[] = results.map((m) => ({
+  const memories: RecallMemory[] = filtered.map((m) => ({
     id: m.id,
     content: m.content,
     category: m.category,
-    strength: m.strength,
-    relevance: m.strength, // Use strength as relevance for fallback
+    strength: m.decayedStrength,
+    relevance: m.decayedStrength, // Use decayed strength as relevance for fallback
     created_at: m.created_at,
     access_count: m.access_count,
   }));
