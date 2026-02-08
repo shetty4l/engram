@@ -133,6 +133,14 @@ function runMigrations(database: Database): void {
     }
   }
 
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_memories_scope_id ON memories(scope_id);
+    CREATE INDEX IF NOT EXISTS idx_memories_chat_id ON memories(chat_id);
+    CREATE INDEX IF NOT EXISTS idx_memories_thread_id ON memories(thread_id);
+    CREATE INDEX IF NOT EXISTS idx_memories_task_id ON memories(task_id);
+    CREATE INDEX IF NOT EXISTS idx_memories_idempotency_key ON memories(idempotency_key);
+  `);
+
   // Ensure additive tables exist for old databases
   database.exec(`
     CREATE TABLE IF NOT EXISTS idempotency_ledger (

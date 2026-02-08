@@ -29,11 +29,6 @@ CREATE TABLE IF NOT EXISTS memories (
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_memories_strength ON memories(strength);
 CREATE INDEX IF NOT EXISTS idx_memories_last_accessed ON memories(last_accessed);
-CREATE INDEX IF NOT EXISTS idx_memories_scope_id ON memories(scope_id);
-CREATE INDEX IF NOT EXISTS idx_memories_chat_id ON memories(chat_id);
-CREATE INDEX IF NOT EXISTS idx_memories_thread_id ON memories(thread_id);
-CREATE INDEX IF NOT EXISTS idx_memories_task_id ON memories(task_id);
-CREATE INDEX IF NOT EXISTS idx_memories_idempotency_key ON memories(idempotency_key);
 
 -- FTS5 virtual table for full-text search
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
