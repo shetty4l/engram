@@ -6,6 +6,7 @@ set -euo pipefail
 
 REPO="shetty4l/engram"
 INSTALL_BASE="${HOME}/srv/engram"
+BIN_DIR="${HOME}/.local/bin"
 DATA_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/engram"
 MAX_VERSIONS=5
 
@@ -74,6 +75,9 @@ download_and_extract() {
   info "Installing dependencies..."
   (cd "$version_dir" && bun install --frozen-lockfile)
 
+  info "Building CLI..."
+  (cd "$version_dir" && bun build src/cli.ts --compile --outfile engram)
+
   ok "Installed ${RELEASE_TAG} to ${version_dir}"
 }
 
@@ -125,6 +129,19 @@ setup_data_dir() {
   ok "Data directory ready: ${DATA_DIR}"
 }
 
+# --- CLI binary ---
+
+install_cli() {
+  mkdir -p "$BIN_DIR"
+  ln -sf "${INSTALL_BASE}/latest/engram" "${BIN_DIR}/engram"
+  ok "CLI linked: ${BIN_DIR}/engram"
+
+  if [[ ":$PATH:" != *":${BIN_DIR}:"* ]]; then
+    warn "~/.local/bin is not in your PATH. Add it to your shell profile:"
+    warn "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+  fi
+}
+
 # --- status ---
 
 print_status() {
@@ -136,6 +153,7 @@ print_status() {
   echo ""
   echo "  Version:    ${RELEASE_TAG}"
   echo "  Install:    ${install_dir}"
+  echo "  CLI:        ${BIN_DIR}/engram"
   echo "  Data:       ${DATA_DIR}"
   echo ""
   echo "  Add this to your MCP client configuration:"
@@ -166,6 +184,7 @@ main() {
   update_symlink
   prune_versions
   setup_data_dir
+  install_cli
   print_status
 }
 
