@@ -14,11 +14,10 @@ import {
 import { type ForgetInput, forget } from "./tools/forget";
 import { type RecallInput, recall } from "./tools/recall";
 import { type RememberInput, remember } from "./tools/remember";
+import { VERSION } from "./version";
 
 // Initialize database on startup
 initDatabase();
-
-const VERSION = "0.1.0";
 
 const server = new Server(
   {
