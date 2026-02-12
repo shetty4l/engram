@@ -18,9 +18,11 @@
  *   engram stop            Stop daemon
  *   engram status          Show daemon status
  *   engram restart         Restart daemon
+ *   engram version         Show version
  *
  * Options:
  *   --json                 Output in JSON format
+ *   --version, -v          Show version
  *   --help, -h             Show help
  */
 
@@ -45,6 +47,7 @@ import {
 } from "./db";
 import { calculateDecayedStrength, daysSince } from "./db/decay";
 import { startHttpServer } from "./http";
+import { VERSION } from "./version";
 
 const HELP = `
 Engram CLI - Analyze your AI memory database
@@ -64,9 +67,11 @@ Usage:
   engram stop            Stop daemon
   engram status          Show daemon status
   engram restart         Restart daemon
+  engram version         Show version
 
 Options:
   --json                 Output in JSON format
+  --version, -v          Show version
   --help, -h             Show help
 `;
 
@@ -521,6 +526,12 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // Check for version flag
+  if (rawArgs.includes("--version") || rawArgs.includes("-v")) {
+    console.log(VERSION);
+    process.exit(0);
+  }
+
   const { command, args, json } = parseArgs(rawArgs);
 
   // Daemon commands (don't require DB init for some)
@@ -539,6 +550,9 @@ async function main(): Promise<void> {
       return;
     case "restart":
       await cmdRestart();
+      return;
+    case "version":
+      console.log(VERSION);
       return;
   }
 
