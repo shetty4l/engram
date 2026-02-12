@@ -22,8 +22,8 @@ import {
 import { type ForgetInput, forget } from "./tools/forget";
 import { type RecallInput, recall } from "./tools/recall";
 import { type RememberInput, remember } from "./tools/remember";
+import { VERSION } from "./version";
 
-const VERSION = "0.1.0";
 const startTime = Date.now();
 
 interface HttpServer {

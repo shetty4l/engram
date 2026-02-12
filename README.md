@@ -9,7 +9,7 @@ Persistent memory for AI agents. An MCP server that gives your AI assistant long
 ```bash
 git clone https://github.com/shetty4l/engram.git
 cd engram
-./scripts/install.sh
+./scripts/setup-local.sh
 ```
 
 Add to your MCP client config:
