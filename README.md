@@ -4,13 +4,20 @@ Persistent memory for AI agents. An MCP server that gives your AI assistant long
 
 ## Quick Start
 
-### Option 1: Local (Recommended for personal use)
+### Option 1: Install from release (Recommended)
 
 ```bash
-git clone https://github.com/shetty4l/engram.git
-cd engram
-./scripts/setup-local.sh
+curl -fsSL https://github.com/shetty4l/engram/releases/latest/download/install.sh | bash
 ```
+
+This will:
+- Download and extract the latest release to `~/srv/engram/<version>/`
+- Install dependencies and build the `engram` CLI binary
+- Symlink the CLI to `~/.local/bin/engram`
+- Manage a `latest` symlink and prune old versions (keeps last 5)
+- Print the MCP config to add to your client
+
+**Requirements:** `bun`, `curl`, `tar`, `jq`
 
 Add to your MCP client config:
 
@@ -18,12 +25,22 @@ Add to your MCP client config:
 {
   "engram": {
     "command": "bun",
-    "args": ["run", "/path/to/engram/src/index.ts"]
+    "args": ["run", "~/srv/engram/latest/src/index.ts"]
   }
 }
 ```
 
-### Option 2: AWS EC2 (Always-on, cross-device)
+### Option 2: Local development
+
+Clone the repo and run the setup script. Use this if you want to contribute or modify engram.
+
+```bash
+git clone https://github.com/shetty4l/engram.git
+cd engram
+./scripts/setup-local.sh
+```
+
+### Option 3: AWS EC2 (Always-on, cross-device)
 
 Deploy to your AWS account with one command. Requires AWS CLI configured.
 
@@ -60,7 +77,7 @@ Use this flow when running Engram with OpenCode.
 
 - `bun` installed
 - `opencode` installed
-- `engram` CLI on PATH (run `bun link` in this repo once)
+- `engram` CLI on PATH (installed automatically by `install.sh`, or run `bun link` from a local clone)
 
 ### 1) Sync the OpenCode plugin
 
@@ -112,7 +129,7 @@ engram status
 
 ### Troubleshooting
 
-- `engram: command not found`: run `bun link` from this repo.
+- `engram: command not found`: If installed from release, ensure `~/.local/bin` is in your PATH. If running from a clone, run `bun link` from the repo.
 - Plugin not loading: verify `~/.config/opencode/plugins/engram.ts` exists, then rerun `bun run setup` and restart OpenCode.
 - Daemon issues:
   - `engram status`
@@ -257,10 +274,15 @@ and continues. Any real test failures still fail CI.
 
 ## CI/CD
 
-- CI workflow: `.github/workflows/ci.yml`
+- **CI workflow**: `.github/workflows/ci.yml`
   - Runs on every push and pull request
   - Executes required `bun run validate`
   - Executes `bun run test:full` with special handling for known Bun exit `133`
+- **Release workflow**: `.github/workflows/release.yml`
+  - Triggers automatically on CI success on `main`
+  - Auto-increments the patch version from the latest git tag
+  - Creates a source tarball and publishes a GitHub Release with `install.sh`
+  - Install: `curl -fsSL https://github.com/shetty4l/engram/releases/latest/download/install.sh | bash`
 
 ## Roadmap
 
