@@ -72,6 +72,33 @@ describe("Decay Calculation", () => {
     expect(strength).toBeLessThanOrEqual(1.0);
   });
 
+  test("access boost is capped at maxAccessBoost", () => {
+    // Memory accessed 50 days ago with access_count=100
+    // Without cap: 1.0 * 0.95^50 * log(101)/log(2) ≈ 0.0769 * 6.66 ≈ 0.512
+    // With cap (2.0): 1.0 * 0.95^50 * 2.0 ≈ 0.0769 * 2.0 ≈ 0.154
+    const fiftyDaysAgo = new Date(
+      Date.now() - 50 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const strength = calculateDecayedStrength(fiftyDaysAgo, 100, 1.0);
+
+    // With cap of 2.0, should be around 0.154
+    expect(strength).toBeGreaterThan(0.1);
+    expect(strength).toBeLessThan(0.25);
+  });
+
+  test("access_count=1 boost is unchanged by cap", () => {
+    // access_count=1: normalizedBoost = log(2)/log(2) = 1.0, cap is 2.0
+    // So the cap doesn't affect it
+    const sevenDaysAgo = new Date(
+      Date.now() - 7 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const strength = calculateDecayedStrength(sevenDaysAgo, 1, 1.0);
+
+    // 1.0 * 0.95^7 * 1.0 ≈ 0.698
+    expect(strength).toBeGreaterThan(0.6);
+    expect(strength).toBeLessThan(0.8);
+  });
+
   test("handles zero access count with decay", () => {
     // Memory accessed a week ago with 0 access count
     // access_count = 0 means log(1) = 0, normalized boost = 0, so strength = 0
@@ -383,6 +410,35 @@ describe("Recall Decay Integration", () => {
     // But the DB should have 1.0 (boosted by access)
     const mem = getMemoryById("decayed-vis");
     expect(mem!.strength).toBe(1.0);
+  });
+
+  test("strength-weighted ranking: fresher memory outranks stale one in FTS5", async () => {
+    // Both memories match the query "coding" equally well via FTS5
+    // But "fresh" was accessed recently (high strength) and "stale" is old (low strength)
+    createMemory({
+      id: "fresh",
+      content: "Modern coding standards and practices",
+    });
+    createMemory({
+      id: "stale",
+      content: "Legacy coding conventions and practices",
+    });
+
+    // Backdate "stale" to 20 days ago — effective strength ≈ 0.358
+    // "fresh" stays at strength 1.0
+    setLastAccessed("stale", 20);
+
+    const result = await recall({ query: "coding practices" });
+
+    expect(result.memories.length).toBe(2);
+    // Fresh memory should rank higher due to strength weighting
+    // Even if FTS5 BM25 scores are similar, relevance = BM25 * strength
+    expect(result.memories[0].id).toBe("fresh");
+    expect(result.memories[0].relevance).toBeGreaterThan(
+      result.memories[1].relevance,
+    );
+    // The stale memory's relevance should be noticeably lower
+    expect(result.memories[1].strength).toBeLessThan(0.5);
   });
 
   test("min_strength parameter filters correctly with decay", async () => {

@@ -14,6 +14,7 @@ export interface RecallInput {
   limit?: number;
   category?: string;
   min_strength?: number;
+  metadata_filter?: Record<string, unknown>;
   session_id?: string;
   scope_id?: string;
   chat_id?: string;
@@ -34,6 +35,26 @@ export interface RecallMemory {
 export interface RecallOutput {
   memories: RecallMemory[];
   fallback_mode: boolean;
+}
+
+/**
+ * Check if a memory's metadata matches the given filter.
+ * All filter keys must match (AND logic). Exact-match on top-level keys.
+ * Returns false if memory has no metadata.
+ */
+function matchesMetadataFilter(
+  metadataJson: string | null | undefined,
+  filter: Record<string, unknown>,
+): boolean {
+  if (!metadataJson) return false;
+  try {
+    const metadata = JSON.parse(metadataJson) as Record<string, unknown>;
+    return Object.entries(filter).every(
+      ([key, value]) => metadata[key] === value,
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -84,8 +105,9 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
       id: m.id,
       content: m.content,
       category: m.category,
+      metadata_json: m.metadata_json,
       strength: decayedStrength,
-      relevance: similarity,
+      relevance: similarity * decayedStrength,
       created_at: m.created_at,
       access_count: m.access_count,
     };
@@ -94,6 +116,11 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
   const scoredMemories = allDecayed
     .filter((m) => m.strength >= minStrength)
     .filter((m) => !input.category || m.category === input.category)
+    .filter(
+      (m) =>
+        !input.metadata_filter ||
+        matchesMetadataFilter(m.metadata_json, input.metadata_filter),
+    )
     .sort((a, b) => b.relevance - a.relevance)
     .slice(0, limit);
 
@@ -147,6 +174,13 @@ function recallFTS5(
     filtered = filtered.filter((m) => m.category === input.category);
   }
 
+  // Filter by metadata if provided
+  if (input.metadata_filter) {
+    filtered = filtered.filter((m) =>
+      matchesMetadataFilter(m.metadata_json, input.metadata_filter!),
+    );
+  }
+
   // Apply limit
   filtered = filtered.slice(0, limit);
 
@@ -163,7 +197,7 @@ function recallFTS5(
     content: m.content,
     category: m.category,
     strength: m.decayedStrength,
-    relevance: Math.exp(m.rank), // e^rank normalizes BM25
+    relevance: Math.exp(m.rank) * m.decayedStrength, // e^rank normalizes BM25, weighted by strength
     created_at: m.created_at,
     access_count: m.access_count,
   }));
@@ -209,6 +243,13 @@ function recallFallback(
   // Filter by category if provided
   if (input.category) {
     filtered = filtered.filter((m) => m.category === input.category);
+  }
+
+  // Filter by metadata if provided
+  if (input.metadata_filter) {
+    filtered = filtered.filter((m) =>
+      matchesMetadataFilter(m.metadata_json, input.metadata_filter!),
+    );
   }
 
   // Apply limit

@@ -536,6 +536,7 @@ export interface MemoryWithEmbedding {
   chat_id: string | null;
   thread_id: string | null;
   task_id: string | null;
+  metadata_json: string | null;
   strength: number;
   created_at: string;
   last_accessed: string;
@@ -555,7 +556,7 @@ export function getAllMemoriesWithEmbeddings(
   applyMemoryFilters(filters, clauses, params);
   const whereClause = `WHERE ${clauses.join(" AND ")}`;
   const stmt = database.prepare(
-    `SELECT id, content, category, scope_id, chat_id, thread_id, task_id, strength, created_at, last_accessed, access_count, embedding FROM memories ${whereClause}`,
+    `SELECT id, content, category, scope_id, chat_id, thread_id, task_id, metadata_json, strength, created_at, last_accessed, access_count, embedding FROM memories ${whereClause}`,
   );
   return stmt.all(params) as MemoryWithEmbedding[];
 }

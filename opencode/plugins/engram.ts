@@ -14,6 +14,7 @@ import type { Plugin } from "@opencode-ai/plugin";
 const DEBOUNCE_MS = 60_000; // 60 seconds
 const MAX_MESSAGES_FOR_CONTEXT = 20; // Last N messages to extract from
 const ENGRAM_URL = "http://127.0.0.1:7749";
+const AUTO_EXTRACT_ENABLED = process.env.ENGRAM_PLUGIN_AUTO_EXTRACT !== "0"; // Enabled by default, set to "0" to disable
 
 export const EngramPlugin: Plugin = async ({ client, $ }) => {
   // Track last extraction time per session for debouncing
@@ -176,6 +177,11 @@ Before continuing, use engram_recall to retrieve relevant memories that may help
      */
     event: async ({ event }) => {
       if (event.type === "session.idle") {
+        // Skip extraction if auto-extract is disabled
+        if (!AUTO_EXTRACT_ENABLED) {
+          return;
+        }
+
         const sessionId = event.properties.sessionID;
         const now = Date.now();
 

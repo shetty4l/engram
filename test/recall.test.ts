@@ -143,6 +143,76 @@ describe("recall tool", () => {
     expect(result.memories[0].content).toBe("Project A memory");
   });
 
+  test("filters by metadata_filter", async () => {
+    await remember({
+      content: "Flagged memory about TypeScript",
+      metadata: { needs_review: true, review_reason: "conflict" },
+    });
+    await remember({
+      content: "Normal memory about TypeScript",
+    });
+    await remember({
+      content: "Another flagged memory about JavaScript",
+      metadata: { needs_review: true },
+    });
+
+    const result = await recall({
+      query: "programming",
+      metadata_filter: { needs_review: true },
+    });
+
+    expect(result.memories).toHaveLength(2);
+    expect(
+      result.memories.every(
+        (m) =>
+          m.content.includes("Flagged") ||
+          m.content.includes("Another flagged"),
+      ),
+    ).toBe(true);
+  });
+
+  test("metadata_filter with multiple keys uses AND logic", async () => {
+    await remember({
+      content: "Memory with both flags",
+      metadata: { needs_review: true, priority: "high" },
+    });
+    await remember({
+      content: "Memory with only needs_review",
+      metadata: { needs_review: true },
+    });
+
+    const result = await recall({
+      query: "Memory",
+      metadata_filter: { needs_review: true, priority: "high" },
+    });
+
+    expect(result.memories).toHaveLength(1);
+    expect(result.memories[0].content).toBe("Memory with both flags");
+  });
+
+  test("metadata_filter returns nothing when no memories have metadata", async () => {
+    await remember({ content: "Plain memory" });
+
+    const result = await recall({
+      query: "memory",
+      metadata_filter: { needs_review: true },
+    });
+
+    expect(result.memories).toHaveLength(0);
+  });
+
+  test("no metadata_filter returns all memories regardless of metadata", async () => {
+    await remember({
+      content: "Memory with metadata",
+      metadata: { needs_review: true },
+    });
+    await remember({ content: "Memory without metadata" });
+
+    const result = await recall({ query: "Memory" });
+
+    expect(result.memories).toHaveLength(2);
+  });
+
   // Semantic search behavior tests
   describe("semantic search", () => {
     test("finds memories with semantically similar content", async () => {

@@ -14,6 +14,8 @@ export interface Config {
     rate: number;
     /** Strength to set when a memory is accessed */
     accessBoostStrength: number;
+    /** Maximum access count boost multiplier (caps log-based boost) */
+    maxAccessBoost: number;
   };
   http: {
     port: number;
@@ -66,6 +68,9 @@ export function getConfig(): Config {
       accessBoostStrength: process.env.ENGRAM_ACCESS_BOOST_STRENGTH
         ? parseFloat(process.env.ENGRAM_ACCESS_BOOST_STRENGTH)
         : 1.0,
+      maxAccessBoost: process.env.ENGRAM_DECAY_MAX_ACCESS_BOOST
+        ? parseFloat(process.env.ENGRAM_DECAY_MAX_ACCESS_BOOST)
+        : 2.0,
     },
     http: {
       port: process.env.ENGRAM_HTTP_PORT
