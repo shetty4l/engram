@@ -78,7 +78,8 @@ download_and_extract() {
   info "Creating CLI wrapper..."
   cat > "$version_dir/engram" <<'WRAPPER'
 #!/usr/bin/env bash
-exec bun run "$(cd "$(dirname "$0")" && pwd)/src/cli.ts" "$@"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
+exec bun run "$SCRIPT_DIR/src/cli.ts" "$@"
 WRAPPER
   chmod +x "$version_dir/engram"
 
