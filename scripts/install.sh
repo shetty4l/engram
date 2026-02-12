@@ -75,8 +75,12 @@ download_and_extract() {
   info "Installing dependencies..."
   (cd "$version_dir" && bun install --frozen-lockfile)
 
-  info "Building CLI..."
-  (cd "$version_dir" && bun build src/cli.ts --compile --outfile engram)
+  info "Creating CLI wrapper..."
+  cat > "$version_dir/engram" <<'WRAPPER'
+#!/usr/bin/env bash
+exec bun run "$(cd "$(dirname "$0")" && pwd)/src/cli.ts" "$@"
+WRAPPER
+  chmod +x "$version_dir/engram"
 
   ok "Installed ${RELEASE_TAG} to ${version_dir}"
 }
