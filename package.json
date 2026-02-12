@@ -10,7 +10,6 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "analyze": "bun run src/cli.ts",
-    "build:cli": "bun build src/cli.ts --compile --outfile engram",
     "setup": "bun run scripts/setup.ts",
     "opencode:config": "bun run scripts/opencode-config.ts",
     "test:core": "bun test test/db.test.ts test/cli.test.ts test/capabilities.test.ts test/http.test.ts test/decay.test.ts",
