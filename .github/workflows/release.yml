@@ -40,11 +40,25 @@ jobs:
           # Strip 'v' prefix and split into major.minor.patch
           VERSION="${LATEST_TAG#v}"
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-          NEXT_PATCH=$((PATCH + 1))
-          NEXT_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}"
+
+          # Scan commits since last tag for [minor] or [major] bump markers
+          # created by: bun run version:bump <minor|major>
+          COMMITS_SINCE="$(git log "${LATEST_TAG}..HEAD" --format='%s' 2>/dev/null || echo "")"
+          if echo "$COMMITS_SINCE" | grep -q '\[major\]'; then
+            NEXT_VERSION="$((MAJOR + 1)).0.0"
+            BUMP_LEVEL="major"
+          elif echo "$COMMITS_SINCE" | grep -q '\[minor\]'; then
+            NEXT_VERSION="${MAJOR}.$((MINOR + 1)).0"
+            BUMP_LEVEL="minor"
+          else
+            NEXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+            BUMP_LEVEL="patch"
+          fi
+
+          echo "bump_level=${BUMP_LEVEL}" >> "$GITHUB_OUTPUT"
           echo "next_version=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
           echo "next_tag=v${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Releasing: v${NEXT_VERSION} (previous: ${LATEST_TAG})"
+          echo "Releasing: v${NEXT_VERSION} (previous: ${LATEST_TAG}, bump: ${BUMP_LEVEL})"
 
       - name: Write VERSION file
         run: echo "${{ steps.version.outputs.next_version }}" > VERSION

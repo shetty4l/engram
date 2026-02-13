@@ -20,6 +20,7 @@
     "format:check": "biome check src/ test/",
     "validate": "bun run typecheck && bun run lint && bun run format:check && bun run test:core",
     "validate:full": "bun run typecheck && bun run lint && bun run format:check && bun run test:full",
+    "version:bump": "bun run scripts/version-bump.ts",
     "prepare": "husky"
   },
   "dependencies": {
