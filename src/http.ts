@@ -75,7 +75,7 @@ async function handleRequest(req: Request): Promise<Response> {
     if (path === "/health" && method === "GET") {
       return Response.json(
         {
-          status: "ok",
+          status: "healthy",
           version: VERSION,
           uptime: Math.floor((Date.now() - startTime) / 1000),
         },
