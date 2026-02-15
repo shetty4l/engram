@@ -101,14 +101,17 @@ Categories are hints, not strict taxonomy. Memories are primarily retrieved by s
 - Each memory has a `strength` score (0.0 - 1.0)
 - Strength decays over time: `strength = base * 0.95^(days_since_access)`
 - Accessing a memory resets decay and increments access count
-- Access count provides log-scale boost: `* log(access_count + 1)`
+- Access count provides log-scale boost: `* min(log(access_count + 1) / log(2), max_access_boost)`
+- Default max access boost: 2.0 (configurable via `ENGRAM_DECAY_MAX_ACCESS_BOOST`)
 - Low-strength memories sink below retrieval threshold but are never deleted
 
-**Conflict Resolution:**
-1. Agent calls `reflect()` 
-2. Return unresolved conflicts with both memories
-3. Present options: keep A, keep B, merge, keep both (context-dependent)
-4. User chooses, system updates accordingly
+**Conflict Resolution (agent-side, not Engram):**
+1. Calling agent detects conflicts during recall-before-remember check
+2. Clear-cut cases: agent resolves autonomously (forget old + remember new)
+3. Ambiguous cases: agent flags with `metadata: { needs_review: true, review_reason: "..." }`
+4. User requests review: agent recalls flagged memories via `metadata_filter`, presents options per conflict
+5. Options: keep new (forget old), enrich (merge both), keep both (mark resolved), dismiss
+6. Resolution via existing tools: `forget()` + `remember()` with updated metadata
 
 ---
 
@@ -204,6 +207,7 @@ Retrieve relevant memories.
     limit?: number;         // Max results, default 10
     category?: string;      // Filter by category
     min_strength?: number;  // Filter weak memories, default 0.1
+    metadata_filter?: Record<string, unknown>;  // Filter by metadata (exact-match, AND logic)
 }
 ```
 
@@ -231,41 +235,21 @@ Retrieve relevant memories.
 5. Recalculate strength based on access
 6. Return ranked results
 
-### `reflect`
+### Reflection (via `recall` + `metadata_filter`)
 
-Surface and resolve conflicts.
+Conflict resolution uses existing tools rather than a dedicated `reflect` tool:
 
-**Input:**
-```typescript
-{
-    resolve?: {
-        conflict_id: string;
-        action: 'keep_a' | 'keep_b' | 'merge' | 'keep_both';
-        merged_content?: string;  // Required if action is 'merge'
-    }
-}
-```
+1. Agent stores ambiguous memories with `metadata: { needs_review: true, review_reason: "..." }`
+2. To review: `recall({ query: "", metadata_filter: { needs_review: true } })`
+3. Agent presents flagged memories to user with resolution options
+4. Resolution via `forget()` + `remember()` with updated metadata
 
-**Output (when no resolve provided):**
-```typescript
-{
-    conflicts: Array<{
-        id: string;
-        memory_a: { id: string; content: string; created_at: string; access_count: number; };
-        memory_b: { id: string; content: string; created_at: string; access_count: number; };
-        flagged_at: string;
-    }>;
-}
-```
+**Metadata conventions for conflict tracking:**
+- `{ needs_review: true, review_reason: "..." }` — flagged for user review
+- `{ supersedes: "<memory-id>", supersedes_reason: "..." }` — newer replaces older
+- `{ related_to: ["<id-1>", "<id-2>"] }` — non-hierarchical links
 
-**Output (when resolving):**
-```typescript
-{
-    resolved: boolean;
-    action_taken: string;
-    resulting_memory_id?: string;  // If merged
-}
-```
+To update metadata without changing content: `forget(id)` then `remember(same content, updated metadata)`.
 
 ---
 
@@ -342,6 +326,9 @@ ENGRAM_DB_PATH=~/.local/share/engram/engram.db    # Database location
 ENGRAM_HTTP_PORT=7749                              # HTTP server port
 ENGRAM_HTTP_HOST=127.0.0.1                         # HTTP server host
 ENGRAM_EMBEDDING_MODEL=Xenova/bge-small-en-v1.5   # Embedding model
+ENGRAM_DECAY_RATE=0.95                             # Daily decay rate
+ENGRAM_DECAY_MAX_ACCESS_BOOST=2.0                  # Max access count boost multiplier
+ENGRAM_PLUGIN_AUTO_EXTRACT=1                       # Plugin auto-extraction (0 to disable)
 ```
 
 **Default paths:**
@@ -427,13 +414,30 @@ Development follows vertical slices - each slice delivers working end-to-end fun
 - [x] `engram prune` CLI command with --dry-run option
 - [x] Configurable decay rate via environment variables
 
-### Slice 6: Memory Intelligence (Future)
-**Goal:** Deduplication and conflict handling
+### Slice 5.5: Retrieval Quality ✅
+**Goal:** Make retrieval leverage the full architecture; establish LLM-driven intelligence pattern
 
-- [ ] Deduplication via similarity threshold on remember
-- [ ] Merge logic with revision history
-- [ ] Conflict detection for contradictory memories
-- [ ] `reflect` tool for surfacing and resolving conflicts
+Architectural decision: **Keep Engram simple, let the calling agent handle intelligence.** Engram improves retrieval quality (ranking, filtering, decay). Knowledge management intelligence (dedup, conflicts, relationships, reflection) should be handled by the calling agent's system prompt, not by Engram code.
+
+- [x] Strength-weighted ranking: `relevance = similarity * decayedStrength` (was pure cosine)
+- [x] Access boost cap: `min(log(accessCount+1)/log(2), maxAccessBoost)` (default 2.0)
+- [x] Metadata filtering in `recall()`: `metadata_filter` parameter for exact-match AND logic
+- [x] OpenCode plugin auto-extraction configurable via `ENGRAM_PLUGIN_AUTO_EXTRACT=0`
+
+Calling agent system prompt changes (not Engram code):
+- [ ] REMEMBER mode: recall-before-remember dedup check
+- [ ] Metadata conventions: `supersedes`, `needs_review`, `related_to`
+- [ ] REFLECT mode: surface flagged memories, present resolution options to user
+
+### Slice 6: Agent-Driven Memory Intelligence (Future)
+**Goal:** Knowledge management via agent system prompt conventions
+
+Intelligence lives in the calling agent, not in Engram. Engram provides storage and retrieval primitives; the agent's system prompt should instruct it to use them intelligently.
+
+- [ ] Dedup: agent recalls similar content before storing, skips duplicates
+- [ ] Conflict detection: agent classifies relationships (complementary/contradictory/supersedes)
+- [ ] Metadata conventions for relationship tracking (supersedes, needs_review, related_to)
+- [ ] OpenCode plugin refactor: replace raw log dumping with agent-mediated extraction
 
 ### Slice 7: Portability (Future)
 **Goal:** Transport memory across machines

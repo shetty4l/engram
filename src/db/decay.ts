@@ -43,8 +43,10 @@ export function calculateDecayedStrength(
   // Calculate final strength
   // Normalize access boost so that access_count=1 gives boost of 1.0
   // log(2) ≈ 0.693, so we divide by log(2) to normalize
+  // Cap the boost to prevent frequently-accessed memories from dominating
   const normalizedBoost = accessBoost / Math.log(2);
-  const decayedStrength = baseStrength * decayFactor * normalizedBoost;
+  const cappedBoost = Math.min(normalizedBoost, config.decay.maxAccessBoost);
+  const decayedStrength = baseStrength * decayFactor * cappedBoost;
 
   // Cap at 1.0
   return Math.min(Math.max(decayedStrength, 0), 1.0);

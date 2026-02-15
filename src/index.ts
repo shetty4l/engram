@@ -130,6 +130,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             type: "string",
             description: "Optional task identifier",
           },
+          metadata_filter: {
+            type: "object",
+            description:
+              "Optional metadata filter. Exact-match on top-level keys, AND logic. E.g. { needs_review: true }",
+          },
         },
         required: ["query"],
       },
