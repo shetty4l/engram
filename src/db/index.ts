@@ -272,6 +272,51 @@ export function getMemoryById(id: string): Memory | null {
   return (stmt.get({ $id: id }) as Memory) ?? null;
 }
 
+export function findMemoryByIdempotencyKey(
+  key: string,
+  scopeId?: string,
+): Memory | null {
+  const database = getDatabase();
+  const stmt = database.prepare(
+    `SELECT * FROM memories
+     WHERE idempotency_key = $key AND scope_id IS $scope_id`,
+  );
+  return (
+    (stmt.get({ $key: key, $scope_id: scopeId ?? null }) as Memory) ?? null
+  );
+}
+
+export interface UpdateMemoryContentInput {
+  content: string;
+  category?: string;
+  metadata_json?: string;
+  embedding?: Buffer;
+}
+
+export function updateMemoryContent(
+  id: string,
+  input: UpdateMemoryContentInput,
+): Memory {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    UPDATE memories
+    SET content = $content,
+        category = $category,
+        metadata_json = $metadata_json,
+        embedding = $embedding,
+        updated_at = datetime('now')
+    WHERE id = $id
+    RETURNING *
+  `);
+  return stmt.get({
+    $id: id,
+    $content: input.content,
+    $category: input.category ?? null,
+    $metadata_json: input.metadata_json ?? null,
+    $embedding: input.embedding ?? null,
+  }) as Memory;
+}
+
 function applyMemoryFilters(
   filters: MemoryFilters,
   clauses: string[],
@@ -390,7 +435,7 @@ export function searchMemories(
 
 export interface MetricEvent {
   session_id?: string;
-  event: "remember" | "recall" | "forget";
+  event: "remember" | "upsert" | "recall" | "forget";
   memory_id?: string;
   query?: string;
   result_count?: number;

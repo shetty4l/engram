@@ -81,6 +81,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             type: "string",
             description: "Optional idempotency key for safe retries",
           },
+          upsert: {
+            type: "boolean",
+            description:
+              "When true, update the existing memory matching the idempotency_key instead of creating a new one. Requires idempotency_key. Uses full-replace semantics: omitted optional fields are set to null.",
+          },
         },
         required: ["content"],
       },
@@ -233,6 +238,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const input = args as unknown as RememberInput;
       if (!input.content) {
         throw new Error("content is required");
+      }
+      if (input.upsert && !input.idempotency_key) {
+        throw new Error("upsert requires idempotency_key");
       }
       const result = await remember(input);
       return {
