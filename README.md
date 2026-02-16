@@ -149,9 +149,18 @@ remember({ content: "User prefers TypeScript over JavaScript", category: "prefer
 **Parameters:**
 - `content` (required): The memory content
 - `category` (optional): `decision`, `pattern`, `fact`, `preference`, `insight`
-- `scope_id`, `chat_id`, `thread_id`, `task_id` (optional): Scope filters for isolation (feature-flagged)
+- `scope_id`, `chat_id`, `thread_id`, `task_id` (optional): Scope filters for isolation
 - `metadata` (optional): Structured metadata object
-- `idempotency_key` (optional): Safe retry key (feature-flagged)
+- `idempotency_key` (optional): Safe retry key
+- `upsert` (optional): When `true`, update the existing memory matching the `idempotency_key` instead of creating a new one. Requires `idempotency_key`.
+
+**Returns:** `{ id: string, status: "created" | "updated" }`
+
+**Upsert behavior:**
+- When `upsert: true` and a memory with the same `idempotency_key` (and `scope_id`) exists: overwrites `content`, `category`, `metadata`, and `embedding`. Does not change `created_at`, `access_count`, `strength`, or scope fields.
+- Uses full-replace semantics: omitted optional fields (`category`, `metadata`) are set to `null`.
+- When no match exists: creates a new memory normally.
+- When `upsert` is omitted or `false`: standard idempotency replay (returns cached result, no mutation).
 
 ### `recall`
 

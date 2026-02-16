@@ -85,4 +85,22 @@ describe("http server", () => {
       server.stop();
     }
   });
+
+  test("remember returns 400 when upsert is true without idempotency_key", async () => {
+    const server = startHttpServer();
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/remember`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "test", upsert: true }),
+      });
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as { error: string };
+      expect(body.error).toBe("upsert requires idempotency_key");
+    } finally {
+      server.stop();
+    }
+  });
 });
