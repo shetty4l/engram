@@ -98,6 +98,13 @@ async function handleRequest(req: Request): Promise<Response> {
         );
       }
 
+      if (body.upsert && !body.idempotency_key) {
+        return Response.json(
+          { error: "upsert requires idempotency_key" },
+          { status: 400, headers },
+        );
+      }
+
       const result = await remember(body);
       return Response.json(result, { headers });
     }
