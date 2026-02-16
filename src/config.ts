@@ -85,7 +85,3 @@ export function getConfig(): Config {
     },
   };
 }
-
-export function getDataDirectory(): string {
-  return getDataDir();
-}

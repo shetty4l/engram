@@ -2,15 +2,23 @@
  * Daemon management for Engram HTTP server
  *
  * Handles starting/stopping the HTTP server as a background process.
- * PID and log files stored in ~/.local/share/engram/
+ * PID and log files stored in ~/.config/engram/
  */
 
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
+import { homedir } from "os";
 import { join } from "path";
-import { getConfig, getDataDirectory } from "./config";
+import { getConfig } from "./config";
 
-const PID_FILE = "engram.pid";
-const LOG_FILE = "engram.log";
+const DATA_DIR = join(homedir(), ".config", "engram");
+const PID_FILE = join(DATA_DIR, "engram.pid");
+const LOG_FILE = join(DATA_DIR, "engram.log");
 
 export interface DaemonStatus {
   running: boolean;
@@ -19,12 +27,8 @@ export interface DaemonStatus {
   uptime?: number;
 }
 
-function getPidPath(): string {
-  return join(getDataDirectory(), PID_FILE);
-}
-
-function getLogPath(): string {
-  return join(getDataDirectory(), LOG_FILE);
+function ensureDataDir(): void {
+  mkdirSync(DATA_DIR, { recursive: true });
 }
 
 /**
@@ -44,13 +48,12 @@ function isProcessRunning(pid: number): boolean {
  * Read PID from file, returns undefined if not found or invalid
  */
 function readPid(): number | undefined {
-  const pidPath = getPidPath();
-  if (!existsSync(pidPath)) {
+  if (!existsSync(PID_FILE)) {
     return undefined;
   }
 
   try {
-    const content = readFileSync(pidPath, "utf-8").trim();
+    const content = readFileSync(PID_FILE, "utf-8").trim();
     const pid = parseInt(content, 10);
     return isNaN(pid) ? undefined : pid;
   } catch {
@@ -62,17 +65,16 @@ function readPid(): number | undefined {
  * Write PID to file
  */
 function writePid(pid: number): void {
-  const pidPath = getPidPath();
-  writeFileSync(pidPath, pid.toString(), "utf-8");
+  ensureDataDir();
+  writeFileSync(PID_FILE, pid.toString(), "utf-8");
 }
 
 /**
  * Remove PID file
  */
 function removePidFile(): void {
-  const pidPath = getPidPath();
-  if (existsSync(pidPath)) {
-    unlinkSync(pidPath);
+  if (existsSync(PID_FILE)) {
+    unlinkSync(PID_FILE);
   }
 }
 
@@ -131,15 +133,15 @@ export async function startDaemon(): Promise<boolean> {
   }
 
   const config = getConfig();
-  const logPath = getLogPath();
+  ensureDataDir();
 
   // Get the path to the CLI entry point
   const cliPath = join(import.meta.dir, "cli.ts");
 
   // Spawn detached process
   const proc = Bun.spawn(["bun", "run", cliPath, "serve"], {
-    stdout: Bun.file(logPath),
-    stderr: Bun.file(logPath),
+    stdout: Bun.file(LOG_FILE),
+    stderr: Bun.file(LOG_FILE),
     stdin: "ignore",
   });
 
@@ -158,7 +160,7 @@ export async function startDaemon(): Promise<boolean> {
     return true;
   }
 
-  console.error("Failed to start Engram daemon. Check logs:", logPath);
+  console.error("Failed to start Engram daemon. Check logs:", LOG_FILE);
   removePidFile();
   return false;
 }
