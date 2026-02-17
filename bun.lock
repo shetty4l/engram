@@ -7,7 +7,7 @@
       "dependencies": {
         "@huggingface/transformers": "^3.8.1",
         "@modelcontextprotocol/sdk": "^1.0.0",
-        "@shetty4l/core": ">=0.1.0 <1.0.0",
+        "@shetty4l/core": "^0.1.18",
       },
       "devDependencies": {
         "@biomejs/biome": "^2.3.13",
@@ -135,7 +135,7 @@
 
     "@protobufjs/utf8": ["@protobufjs/utf8@1.1.0", "", {}, "sha512-Vvn3zZrhQZkkBE8LSuW3em98c0FwgO4nxzv6OdSxPKJIEKY2bGbHn+mhGIPerzI4twdxaP8/0+06HBpwf345Lw=="],
 
-    "@shetty4l/core": ["@shetty4l/core@0.1.17", "", { "bin": { "version-bump": "bin/version-bump.js" } }, "sha512-OkgMYxF5273YTMqNMiE+LDix33ESrP9MI8XeNbTDEHBPc+0Gf5CrUgV/dmPIggjiAUT+zLLO/Asdb2o262lrgQ=="],
+    "@shetty4l/core": ["@shetty4l/core@0.1.18", "", { "bin": { "version-bump": "bin/version-bump.js" } }, "sha512-lMZ//FvhD6Uu8bWM75fwPd6A412zrZp3CPXxlNeFZr6VtiVh9Ua+LqkrBm7t4CDUrXDOr+AezpR+xfvkCThnAA=="],
 
     "@types/bun": ["@types/bun@1.3.9", "", { "dependencies": { "bun-types": "1.3.9" } }, "sha512-KQ571yULOdWJiMH+RIWIOZ7B2RXQGpL1YQrBtLIV3FqDcCu6FsbFUBwhdKUlCKUpS3PJDsHlJ1QKlpxoVR+xtw=="],
 

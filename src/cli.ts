@@ -18,6 +18,7 @@
  *   engram stop            Stop daemon
  *   engram status          Show daemon status
  *   engram restart         Restart daemon
+ *   engram logs [n]        Show last n log lines (default: 20)
  *   engram version         Show version
  *
  * Options:
@@ -27,8 +28,10 @@
  */
 
 import type { CommandHandler } from "@shetty4l/core/cli";
-import { formatUptime, runCli } from "@shetty4l/core/cli";
+import { createLogsCommand, formatUptime, runCli } from "@shetty4l/core/cli";
+import { getConfigDir } from "@shetty4l/core/config";
 import { onShutdown } from "@shetty4l/core/signals";
+import { join } from "path";
 import { getConfig } from "./config";
 import {
   getDaemonStatus,
@@ -53,6 +56,9 @@ import { calculateDecayedStrength, daysSince } from "./db/decay";
 import { startHttpServer } from "./http";
 import { VERSION } from "./version";
 
+const CONFIG_DIR = getConfigDir("engram");
+const LOG_FILE = join(CONFIG_DIR, "engram.log");
+
 const HELP = `
 Engram CLI \u2014 persistent memory for AI agents
 
@@ -72,6 +78,7 @@ Usage:
   engram status          Show daemon status
   engram restart         Restart daemon
   engram health          Check health of running instance
+  engram logs [n]        Show last n log lines (default: 20)
   engram version         Show version
 
 Options:
@@ -544,6 +551,10 @@ runCli({
     status: cmdStatus,
     restart: () => cmdRestart(),
     health: cmdHealth,
+    logs: createLogsCommand({
+      logFile: LOG_FILE,
+      emptyMessage: "No log entries yet.",
+    }),
     stats: withDb(cmdStats),
     recent: withDb(cmdRecent),
     search: withDb(cmdSearch),
