@@ -44,7 +44,7 @@ export function startHttpServer(): HttpServer {
     fetch: handleRequest,
   });
 
-  console.error(`engram: listening on http://${host}:${port}`);
+  console.error(`engram v${VERSION}: listening on http://${host}:${port}`);
 
   return {
     port: server.port ?? port,
@@ -56,7 +56,24 @@ async function handleRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
   const method = req.method;
+  const start = performance.now();
 
+  const response = await routeRequest(req, path, method);
+
+  const latency = (performance.now() - start).toFixed(0);
+  // Skip logging CORS preflight and health checks to reduce noise
+  if (method !== "OPTIONS" && path !== "/health") {
+    console.error(`engram: ${method} ${path} ${response.status} ${latency}ms`);
+  }
+
+  return response;
+}
+
+async function routeRequest(
+  req: Request,
+  path: string,
+  method: string,
+): Promise<Response> {
   // CORS headers for local development
   const headers = {
     "Content-Type": "application/json",
@@ -164,7 +181,7 @@ async function handleRequest(req: Request): Promise<Response> {
     // Not found
     return Response.json({ error: "Not found" }, { status: 404, headers });
   } catch (error) {
-    console.error("HTTP request error:", error);
+    console.error("engram: request error:", error);
     return Response.json(
       {
         error: error instanceof Error ? error.message : "Internal server error",

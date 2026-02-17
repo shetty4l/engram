@@ -373,24 +373,34 @@ export function searchMemories(
 
   const clauses: string[] = [];
   const params: Record<string, string | number> = {
-    $query: query,
     $limit: limit,
   };
   applyMemoryFilters(filters, clauses, params);
   const whereClause = clauses.length > 0 ? `AND ${clauses.join(" AND ")}` : "";
 
-  // FTS5 search with BM25 ranking (lower rank = better match)
-  const stmt = database.prepare(`
-    SELECT m.*, bm25(memories_fts) as rank
-    FROM memories_fts fts
-    JOIN memories m ON m.rowid = fts.rowid
-    WHERE memories_fts MATCH $query
-    ${whereClause}
-    ORDER BY rank, m.strength DESC, m.last_accessed DESC
-    LIMIT $limit
-  `);
+  // Wrap query in double quotes for literal phrase matching.
+  // Escape any internal double quotes by doubling them (FTS5 convention).
+  // This prevents FTS5 syntax errors from punctuation like ?, ., -
+  const safeQuery = `"${query.replace(/"/g, '""')}"`;
+  params.$query = safeQuery;
 
-  return stmt.all(params) as SearchResult[];
+  // FTS5 search with BM25 ranking (lower rank = better match)
+  try {
+    const stmt = database.prepare(`
+      SELECT m.*, bm25(memories_fts) as rank
+      FROM memories_fts fts
+      JOIN memories m ON m.rowid = fts.rowid
+      WHERE memories_fts MATCH $query
+      ${whereClause}
+      ORDER BY rank, m.strength DESC, m.last_accessed DESC
+      LIMIT $limit
+    `);
+
+    return stmt.all(params) as SearchResult[];
+  } catch {
+    // FTS5 parse error — fall back to strength-ordered results
+    return getAllMemories(limit, filters).map((m) => ({ ...m, rank: 0 }));
+  }
 }
 
 // Metrics functions
