@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Engram CLI - Analyze your AI memory database
+ * Engram CLI — persistent memory for AI agents
  *
  * Usage:
  *   engram stats           Show memory statistics
@@ -26,6 +26,9 @@
  *   --help, -h             Show help
  */
 
+import type { CommandHandler } from "@shetty4l/core/cli";
+import { formatUptime, runCli } from "@shetty4l/core/cli";
+import { onShutdown } from "@shetty4l/core/signals";
 import {
   getDaemonStatus,
   restartDaemon,
@@ -50,7 +53,7 @@ import { startHttpServer } from "./http";
 import { VERSION } from "./version";
 
 const HELP = `
-Engram CLI - Analyze your AI memory database
+Engram CLI \u2014 persistent memory for AI agents
 
 Usage:
   engram stats           Show memory statistics
@@ -75,16 +78,7 @@ Options:
   --help, -h             Show help
 `;
 
-function parseArgs(args: string[]): {
-  command: string;
-  args: string[];
-  json: boolean;
-} {
-  const filtered = args.filter((a) => a !== "--json");
-  const json = args.includes("--json");
-  const [command = "help", ...rest] = filtered;
-  return { command, args: rest, json };
-}
+// --- Helpers ---
 
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return "N/A";
@@ -97,7 +91,6 @@ function truncate(str: string, maxLen: number): string {
   return `${str.slice(0, maxLen - 3)}...`;
 }
 
-// Strip embedding from memory objects for JSON output (too noisy)
 function stripEmbedding<T extends { embedding?: unknown }>(
   obj: T,
 ): Omit<T, "embedding"> {
@@ -111,9 +104,17 @@ function stripEmbeddings<T extends { embedding?: unknown }>(
   return arr.map(stripEmbedding);
 }
 
-// Commands
+/** Wrap a command handler so initDatabase() is called before dispatch. */
+function withDb(fn: CommandHandler): CommandHandler {
+  return (args, json) => {
+    initDatabase();
+    return fn(args, json);
+  };
+}
 
-function cmdStats(json: boolean): void {
+// --- Commands ---
+
+function cmdStats(_args: string[], json: boolean): void {
   const stats = getStats();
 
   if (json) {
@@ -138,24 +139,24 @@ function cmdStats(json: boolean): void {
   console.log();
 }
 
-function cmdRecent(limitStr: string | undefined, json: boolean): void {
-  const limit = limitStr ? Number.parseInt(limitStr, 10) : 10;
+function cmdRecent(args: string[], json: boolean): number {
+  const limit = args[0] ? Number.parseInt(args[0], 10) : 10;
 
   if (Number.isNaN(limit) || limit < 1) {
     console.error("Error: limit must be a positive number");
-    process.exit(1);
+    return 1;
   }
 
   const memories = getRecentMemories(limit);
 
   if (json) {
     console.log(JSON.stringify(stripEmbeddings(memories), null, 2));
-    return;
+    return 0;
   }
 
   if (memories.length === 0) {
     console.log("\nNo memories found.\n");
-    return;
+    return 0;
   }
 
   console.log(`\n=== Recent Memories (${memories.length}) ===\n`);
@@ -167,25 +168,27 @@ function cmdRecent(limitStr: string | undefined, json: boolean): void {
     console.log(`  Created: ${formatDate(mem.created_at)}`);
     console.log();
   }
+  return 0;
 }
 
-function cmdSearch(query: string | undefined, json: boolean): void {
+function cmdSearch(args: string[], json: boolean): number {
+  const query = args.join(" ");
   if (!query) {
     console.error("Error: search query required");
     console.error("Usage: engram search <query>");
-    process.exit(1);
+    return 1;
   }
 
   const results = searchMemories(query, 20);
 
   if (json) {
     console.log(JSON.stringify(stripEmbeddings(results), null, 2));
-    return;
+    return 0;
   }
 
   if (results.length === 0) {
     console.log(`\nNo memories found for query: "${query}"\n`);
-    return;
+    return 0;
   }
 
   console.log(`\n=== Search Results for "${query}" (${results.length}) ===\n`);
@@ -198,9 +201,10 @@ function cmdSearch(query: string | undefined, json: boolean): void {
     console.log(`  ${truncate(mem.content, 70)}`);
     console.log();
   }
+  return 0;
 }
 
-function cmdMetrics(json: boolean): void {
+function cmdMetrics(_args: string[], json: boolean): void {
   const metrics = getMetricsSummary();
 
   if (json) {
@@ -220,23 +224,24 @@ function cmdMetrics(json: boolean): void {
   console.log();
 }
 
-function cmdShow(id: string | undefined, json: boolean): void {
+function cmdShow(args: string[], json: boolean): number {
+  const id = args[0];
   if (!id) {
     console.error("Error: memory ID required");
     console.error("Usage: engram show <id>");
-    process.exit(1);
+    return 1;
   }
 
   const memory = getMemoryById(id);
 
   if (!memory) {
     console.error(`Error: memory not found: ${id}`);
-    process.exit(1);
+    return 1;
   }
 
   if (json) {
     console.log(JSON.stringify(stripEmbedding(memory), null, 2));
-    return;
+    return 0;
   }
 
   console.log("\n=== Memory Details ===\n");
@@ -248,28 +253,31 @@ function cmdShow(id: string | undefined, json: boolean): void {
   console.log(`Last accessed: ${formatDate(memory.last_accessed)}`);
   console.log(`\nContent:\n${memory.content}`);
   console.log();
+  return 0;
 }
 
-function cmdForget(id: string | undefined, json: boolean): void {
+function cmdForget(args: string[], json: boolean): number {
+  const id = args[0];
   if (!id) {
     console.error("Error: memory ID required");
     console.error("Usage: engram forget <id>");
-    process.exit(1);
+    return 1;
   }
 
   const deleted = deleteMemoryById(id);
 
   if (json) {
     console.log(JSON.stringify({ id, deleted }, null, 2));
-    process.exit(deleted ? 0 : 1);
+    return deleted ? 0 : 1;
   }
 
   if (!deleted) {
     console.error(`Error: memory not found: ${id}`);
-    process.exit(1);
+    return 1;
   }
 
   console.log(`Deleted memory: ${id}`);
+  return 0;
 }
 
 function cmdDecay(args: string[], json: boolean): void {
@@ -284,7 +292,6 @@ function cmdDecay(args: string[], json: boolean): void {
     return;
   }
 
-  // Calculate decay for each memory
   const decayInfo = memories.map((m) => {
     const decayedStrength = calculateDecayedStrength(
       m.last_accessed,
@@ -304,7 +311,6 @@ function cmdDecay(args: string[], json: boolean): void {
     };
   });
 
-  // Check if --apply flag is present
   const shouldApply = args.includes("--apply");
 
   if (json) {
@@ -325,7 +331,7 @@ function cmdDecay(args: string[], json: boolean): void {
     for (const m of decayInfo) {
       const changeStr =
         m.stored_strength !== m.decayed_strength
-          ? ` → ${m.decayed_strength.toFixed(3)}`
+          ? ` \u2192 ${m.decayed_strength.toFixed(3)}`
           : "";
       const staleStr = m.needs_update ? " (stale)" : "";
       console.log(
@@ -346,7 +352,6 @@ function cmdDecay(args: string[], json: boolean): void {
     }
   }
 
-  // Apply decay if requested
   if (shouldApply) {
     let updated = 0;
     for (const m of decayInfo) {
@@ -361,19 +366,18 @@ function cmdDecay(args: string[], json: boolean): void {
   }
 }
 
-function cmdPrune(args: string[], json: boolean): void {
-  // Parse options
+function cmdPrune(args: string[], json: boolean): number {
   const dryRun = args.includes("--dry-run");
   const thresholdArg = args.find((a) => a.startsWith("--threshold="));
-  const threshold = thresholdArg ? parseFloat(thresholdArg.split("=")[1]) : 0.1;
+  const threshold = thresholdArg
+    ? Number.parseFloat(thresholdArg.split("=")[1])
+    : 0.1;
 
   if (Number.isNaN(threshold) || threshold < 0 || threshold > 1) {
     console.error("Error: threshold must be a number between 0 and 1");
-    process.exit(1);
+    return 1;
   }
 
-  // First, apply decay to all memories so we're working with current values
-  // (skip on dry-run to avoid side effects)
   const memories = getAllMemoriesForDecay();
   if (!dryRun) {
     for (const m of memories) {
@@ -388,7 +392,6 @@ function cmdPrune(args: string[], json: boolean): void {
     }
   }
 
-  // For dry-run, calculate what decay WOULD produce without persisting
   const effectiveMemories = dryRun
     ? memories.map((m) => ({
         ...m,
@@ -400,7 +403,6 @@ function cmdPrune(args: string[], json: boolean): void {
       }))
     : memories;
 
-  // Now find memories below threshold
   const toPrune = dryRun
     ? effectiveMemories.filter((m) => m.strength < threshold)
     : getMemoriesBelowStrength(threshold);
@@ -424,7 +426,7 @@ function cmdPrune(args: string[], json: boolean): void {
 
     if (toPrune.length === 0) {
       console.log("No memories below threshold.\n");
-      return;
+      return 0;
     }
 
     for (const m of toPrune) {
@@ -442,156 +444,74 @@ function cmdPrune(args: string[], json: boolean): void {
     }
   }
 
-  // Actually delete if not dry run
   if (!dryRun && toPrune.length > 0) {
     const deleted = pruneMemoriesBelowStrength(threshold);
     if (!json) {
       console.log(`\nDeleted ${deleted} memories.`);
     }
   }
+  return 0;
 }
 
 function cmdServe(): void {
-  console.log("Starting Engram HTTP server...");
   const server = startHttpServer();
-
-  // Keep process running
-  process.on("SIGINT", () => {
-    console.log("\nShutting down...");
-    server.stop();
-    process.exit(0);
-  });
-
-  process.on("SIGTERM", () => {
-    server.stop();
-    process.exit(0);
-  });
+  onShutdown(() => server.stop(), { name: "engram" });
 }
 
-async function cmdStart(): Promise<void> {
+async function cmdStart(): Promise<number> {
   const started = await startDaemon();
-  process.exit(started ? 0 : 1);
+  return started ? 0 : 1;
 }
 
-async function cmdStop(): Promise<void> {
+async function cmdStop(): Promise<number> {
   const stopped = await stopDaemon();
-  process.exit(stopped ? 0 : 1);
+  return stopped ? 0 : 1;
 }
 
-async function cmdStatus(json: boolean): Promise<void> {
+async function cmdStatus(_args: string[], json: boolean): Promise<number> {
   const status = await getDaemonStatus();
 
   if (json) {
     console.log(JSON.stringify(status, null, 2));
-    process.exit(status.running ? 0 : 1);
+    return status.running ? 0 : 1;
   }
 
   if (status.running) {
     const uptimeStr = status.uptime ? formatUptime(status.uptime) : "unknown";
     console.log(
-      `Engram daemon running (PID: ${status.pid}, port: ${status.port}, uptime: ${uptimeStr})`,
+      `engram is running (PID: ${status.pid}, port: ${status.port}, uptime: ${uptimeStr})`,
     );
-    process.exit(0);
-  } else {
-    console.log("Engram daemon is not running");
-    process.exit(1);
+    return 0;
   }
+
+  console.log("engram is not running");
+  return 1;
 }
 
-async function cmdRestart(): Promise<void> {
+async function cmdRestart(): Promise<number> {
   const restarted = await restartDaemon();
-  process.exit(restarted ? 0 : 1);
+  return restarted ? 0 : 1;
 }
 
-function formatUptime(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-  const hours = Math.floor(seconds / 3600);
-  const mins = Math.floor((seconds % 3600) / 60);
-  return `${hours}h ${mins}m`;
-}
+// --- Main ---
 
-// Main
-
-async function main(): Promise<void> {
-  const rawArgs = process.argv.slice(2);
-
-  // Check for help flag
-  if (
-    rawArgs.includes("--help") ||
-    rawArgs.includes("-h") ||
-    rawArgs.length === 0
-  ) {
-    console.log(HELP);
-    process.exit(0);
-  }
-
-  // Check for version flag
-  if (rawArgs.includes("--version") || rawArgs.includes("-v")) {
-    console.log(VERSION);
-    process.exit(0);
-  }
-
-  const { command, args, json } = parseArgs(rawArgs);
-
-  // Daemon commands (don't require DB init for some)
-  switch (command) {
-    case "serve":
-      cmdServe();
-      return; // Keep running
-    case "start":
-      await cmdStart();
-      return;
-    case "stop":
-      await cmdStop();
-      return;
-    case "status":
-      await cmdStatus(json);
-      return;
-    case "restart":
-      await cmdRestart();
-      return;
-    case "version":
-      console.log(VERSION);
-      return;
-  }
-
-  // Initialize database for other commands
-  initDatabase();
-
-  switch (command) {
-    case "stats":
-      cmdStats(json);
-      break;
-    case "recent":
-      cmdRecent(args[0], json);
-      break;
-    case "search":
-      cmdSearch(args.join(" "), json);
-      break;
-    case "metrics":
-      cmdMetrics(json);
-      break;
-    case "show":
-      cmdShow(args[0], json);
-      break;
-    case "forget":
-      cmdForget(args[0], json);
-      break;
-    case "decay":
-      cmdDecay(args, json);
-      break;
-    case "prune":
-      cmdPrune(args, json);
-      break;
-    case "help":
-      console.log(HELP);
-      break;
-    default:
-      console.error(`Unknown command: ${command}`);
-      console.log(HELP);
-      process.exit(1);
-  }
-}
-
-main();
+runCli({
+  name: "engram",
+  version: VERSION,
+  help: HELP,
+  commands: {
+    serve: () => cmdServe(),
+    start: () => cmdStart(),
+    stop: () => cmdStop(),
+    status: cmdStatus,
+    restart: () => cmdRestart(),
+    stats: withDb(cmdStats),
+    recent: withDb(cmdRecent),
+    search: withDb(cmdSearch),
+    metrics: withDb(cmdMetrics),
+    show: withDb(cmdShow),
+    forget: withDb(cmdForget),
+    decay: withDb(cmdDecay),
+    prune: withDb(cmdPrune),
+  },
+});
