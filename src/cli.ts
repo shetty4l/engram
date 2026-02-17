@@ -29,6 +29,7 @@
 import type { CommandHandler } from "@shetty4l/core/cli";
 import { formatUptime, runCli } from "@shetty4l/core/cli";
 import { onShutdown } from "@shetty4l/core/signals";
+import { getConfig } from "./config";
 import {
   getDaemonStatus,
   restartDaemon,
@@ -70,6 +71,7 @@ Usage:
   engram stop            Stop daemon
   engram status          Show daemon status
   engram restart         Restart daemon
+  engram health          Check health of running instance
   engram version         Show version
 
 Options:
@@ -493,6 +495,42 @@ async function cmdRestart(): Promise<number> {
   return restarted ? 0 : 1;
 }
 
+async function cmdHealth(_args: string[], json: boolean): Promise<number> {
+  const config = getConfig();
+  const { port, host } = config.http;
+
+  let response: Response;
+  try {
+    response = await fetch(`http://${host}:${port}/health`);
+  } catch {
+    if (json) {
+      console.log(JSON.stringify({ error: "Server not reachable", port }));
+    } else {
+      console.error(`engram is not running on port ${port}`);
+    }
+    return 1;
+  }
+
+  const data = (await response.json()) as {
+    status: string;
+    version: string;
+    uptime: number;
+  };
+
+  if (json) {
+    console.log(JSON.stringify(data, null, 2));
+    return data.status === "healthy" ? 0 : 1;
+  }
+
+  console.log(
+    `\nStatus:  ${data.status === "healthy" ? "healthy" : "degraded"}`,
+  );
+  console.log(`Version: ${data.version}`);
+  console.log(`Uptime:  ${formatUptime(data.uptime)}\n`);
+
+  return data.status === "healthy" ? 0 : 1;
+}
+
 // --- Main ---
 
 runCli({
@@ -505,6 +543,7 @@ runCli({
     stop: () => cmdStop(),
     status: cmdStatus,
     restart: () => cmdRestart(),
+    health: cmdHealth,
     stats: withDb(cmdStats),
     recent: withDb(cmdRecent),
     search: withDb(cmdSearch),
