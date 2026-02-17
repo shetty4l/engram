@@ -33,12 +33,7 @@ import { getConfigDir } from "@shetty4l/core/config";
 import { onShutdown } from "@shetty4l/core/signals";
 import { join } from "path";
 import { getConfig } from "./config";
-import {
-  getDaemonStatus,
-  restartDaemon,
-  startDaemon,
-  stopDaemon,
-} from "./daemon";
+import { getDaemon } from "./daemon";
 import {
   deleteMemoryById,
   getAllMemoriesForDecay,
@@ -468,17 +463,32 @@ function cmdServe(): void {
 }
 
 async function cmdStart(): Promise<number> {
-  const started = await startDaemon();
-  return started ? 0 : 1;
+  const daemon = getDaemon();
+  const result = await daemon.start();
+  if (!result.ok) {
+    console.error(result.error);
+    return 1;
+  }
+  console.log(
+    `engram daemon started (PID: ${result.value.pid}, port: ${result.value.port ?? "unknown"})`,
+  );
+  return 0;
 }
 
 async function cmdStop(): Promise<number> {
-  const stopped = await stopDaemon();
-  return stopped ? 0 : 1;
+  const daemon = getDaemon();
+  const result = await daemon.stop();
+  if (!result.ok) {
+    console.error(result.error);
+    return 1;
+  }
+  console.log(`engram daemon stopped (was PID: ${result.value.pid})`);
+  return 0;
 }
 
 async function cmdStatus(_args: string[], json: boolean): Promise<number> {
-  const status = await getDaemonStatus();
+  const daemon = getDaemon();
+  const status = await daemon.status();
 
   if (json) {
     console.log(JSON.stringify(status, null, 2));
@@ -498,8 +508,14 @@ async function cmdStatus(_args: string[], json: boolean): Promise<number> {
 }
 
 async function cmdRestart(): Promise<number> {
-  const restarted = await restartDaemon();
-  return restarted ? 0 : 1;
+  const daemon = getDaemon();
+  const result = await daemon.restart();
+  if (!result.ok) {
+    console.error(result.error);
+    return 1;
+  }
+  console.log(`engram daemon restarted (PID: ${result.value.pid})`);
+  return 0;
 }
 
 async function cmdHealth(_args: string[], json: boolean): Promise<number> {
