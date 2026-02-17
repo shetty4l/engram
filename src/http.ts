@@ -44,7 +44,7 @@ export function startHttpServer(): HttpServer {
     fetch: handleRequest,
   });
 
-  console.error(`Engram HTTP server listening on http://${host}:${port}`);
+  console.error(`engram: listening on http://${host}:${port}`);
 
   return {
     port: server.port ?? port,

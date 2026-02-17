@@ -128,7 +128,7 @@ export async function startDaemon(): Promise<boolean> {
   const status = await getDaemonStatus();
 
   if (status.running) {
-    console.log(`Engram daemon already running (PID: ${status.pid})`);
+    console.error(`engram daemon already running (PID: ${status.pid})`);
     return false;
   }
 
@@ -154,13 +154,13 @@ export async function startDaemon(): Promise<boolean> {
   // Verify it's running
   const newStatus = await getDaemonStatus();
   if (newStatus.running) {
-    console.log(
-      `Engram daemon started (PID: ${proc.pid}, port: ${config.http.port})`,
+    console.error(
+      `engram daemon started (PID: ${proc.pid}, port: ${config.http.port})`,
     );
     return true;
   }
 
-  console.error("Failed to start Engram daemon. Check logs:", LOG_FILE);
+  console.error("Failed to start engram daemon. Check logs:", LOG_FILE);
   removePidFile();
   return false;
 }
@@ -173,7 +173,7 @@ export async function stopDaemon(): Promise<boolean> {
   const status = await getDaemonStatus();
 
   if (!status.running || !status.pid) {
-    console.log("Engram daemon is not running");
+    console.error("engram daemon is not running");
     return false;
   }
 
@@ -202,7 +202,7 @@ export async function stopDaemon(): Promise<boolean> {
     }
 
     removePidFile();
-    console.log(`Engram daemon stopped (was PID: ${status.pid})`);
+    console.error(`engram daemon stopped (was PID: ${status.pid})`);
     return true;
   } catch (error) {
     console.error("Error stopping daemon:", error);

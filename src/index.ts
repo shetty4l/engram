@@ -328,7 +328,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Engram MCP server running on stdio");
+  console.error("engram: mcp server running on stdio");
 }
 
 main().catch((error) => {

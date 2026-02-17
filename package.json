@@ -1,6 +1,6 @@
 {
   "name": "engram",
-  "version": "0.1.0",
+  "version": "0.0.0-dev",
   "description": "Persistent memory MCP server for AI agents",
   "type": "module",
   "main": "src/index.ts",
@@ -20,12 +20,13 @@
     "format:check": "biome check src/ test/",
     "validate": "bun run typecheck && bun run lint && bun run format:check && bun run test:core",
     "validate:full": "bun run typecheck && bun run lint && bun run format:check && bun run test:full",
-    "version:bump": "bun run scripts/version-bump.ts",
+    "version:bump": "bunx version-bump",
     "prepare": "husky"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@shetty4l/core": ">=0.1.0 <1.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.13",
