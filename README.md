@@ -256,6 +256,11 @@ ENGRAM_ENABLE_WORK_ITEMS=1
 
 ## Development
 
+### Contributor Rules
+
+- After any code change, run `bun run validate` before moving to the next task.
+- If validation fails, fix issues and re-run validation before opening or updating a PR.
+
 ```bash
 # Core test suite (fast + CI-safe)
 bun run test:core
