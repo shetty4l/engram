@@ -69,6 +69,21 @@ async function handleRequest(req: Request): Promise<Response> {
   return response;
 }
 
+/** Parse JSON body from request, returning a 400 Response on failure. */
+async function parseJsonBody<T>(
+  req: Request,
+  headers: Record<string, string>,
+): Promise<T | Response> {
+  try {
+    return (await req.json()) as T;
+  } catch {
+    return Response.json(
+      { error: "Invalid JSON body" },
+      { status: 400, headers },
+    );
+  }
+}
+
 async function routeRequest(
   req: Request,
   path: string,
@@ -106,7 +121,9 @@ async function routeRequest(
 
     // Remember endpoint
     if (path === "/remember" && method === "POST") {
-      const body = (await req.json()) as RememberInput;
+      const bodyOrError = await parseJsonBody<RememberInput>(req, headers);
+      if (bodyOrError instanceof Response) return bodyOrError;
+      const body = bodyOrError;
 
       if (!body.content) {
         return Response.json(
@@ -115,20 +132,18 @@ async function routeRequest(
         );
       }
 
-      if (body.upsert && !body.idempotency_key) {
-        return Response.json(
-          { error: "upsert requires idempotency_key" },
-          { status: 400, headers },
-        );
-      }
-
       const result = await remember(body);
-      return Response.json(result, { headers });
+      if (!result.ok) {
+        return Response.json({ error: result.error }, { status: 400, headers });
+      }
+      return Response.json(result.value, { headers });
     }
 
     // Recall endpoint
     if (path === "/recall" && method === "POST") {
-      const body = (await req.json()) as RecallInput;
+      const bodyOrError = await parseJsonBody<RecallInput>(req, headers);
+      if (bodyOrError instanceof Response) return bodyOrError;
+      const body = bodyOrError;
 
       if (body.query === undefined) {
         return Response.json(
@@ -143,8 +158,9 @@ async function routeRequest(
 
     // Forget endpoint
     if (path === "/forget" && method === "POST") {
-      const body = (await req.json()) as ForgetInput;
-      const featureConfig = getConfig();
+      const bodyOrError = await parseJsonBody<ForgetInput>(req, headers);
+      if (bodyOrError instanceof Response) return bodyOrError;
+      const body = bodyOrError;
 
       if (!body.id) {
         return Response.json(
@@ -153,15 +169,11 @@ async function routeRequest(
         );
       }
 
-      if (featureConfig.features.scopes && !body.scope_id) {
-        return Response.json(
-          { error: "scope_id is required when scopes are enabled" },
-          { status: 400, headers },
-        );
-      }
-
       const result = await forget(body);
-      return Response.json(result, { headers });
+      if (!result.ok) {
+        return Response.json({ error: result.error }, { status: 400, headers });
+      }
+      return Response.json(result.value, { headers });
     }
 
     if (path === "/context/hydrate" && method === "POST") {
@@ -173,19 +185,22 @@ async function routeRequest(
         );
       }
 
-      const body = (await req.json()) as ContextHydrateInput;
-      const result = await contextHydrate(body);
+      const bodyOrError = await parseJsonBody<ContextHydrateInput>(
+        req,
+        headers,
+      );
+      if (bodyOrError instanceof Response) return bodyOrError;
+
+      const result = await contextHydrate(bodyOrError);
       return Response.json(result, { headers });
     }
 
     // Not found
     return Response.json({ error: "Not found" }, { status: 404, headers });
   } catch (error) {
-    console.error("engram: request error:", error);
+    console.error("engram: unexpected error:", error);
     return Response.json(
-      {
-        error: error instanceof Error ? error.message : "Internal server error",
-      },
+      { error: "Internal server error" },
       { status: 500, headers },
     );
   }

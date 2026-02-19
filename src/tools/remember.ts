@@ -1,3 +1,4 @@
+import { err, ok, type Result } from "@shetty4l/core/result";
 import { getConfig } from "../config";
 import {
   createMemory,
@@ -27,7 +28,9 @@ export interface RememberOutput {
   status: "created" | "updated";
 }
 
-export async function remember(input: RememberInput): Promise<RememberOutput> {
+export async function remember(
+  input: RememberInput,
+): Promise<Result<RememberOutput>> {
   const config = getConfig();
   const scopeIdForIdempotency = config.features.scopes
     ? input.scope_id
@@ -36,7 +39,7 @@ export async function remember(input: RememberInput): Promise<RememberOutput> {
   // Upsert path: check for existing memory by idempotency_key, update if found
   if (input.upsert) {
     if (!input.idempotency_key) {
-      throw new Error("upsert requires idempotency_key");
+      return err("upsert requires idempotency_key");
     }
 
     const existing = findMemoryByIdempotencyKey(
@@ -45,8 +48,15 @@ export async function remember(input: RememberInput): Promise<RememberOutput> {
     );
 
     if (existing) {
-      const embeddingVector = await embed(input.content);
-      const embeddingBuffer = embeddingToBuffer(embeddingVector);
+      const embeddingResult = await embed(input.content);
+      let embeddingBuffer: Buffer | undefined;
+      if (embeddingResult.ok) {
+        embeddingBuffer = embeddingToBuffer(embeddingResult.value);
+      } else {
+        console.error(
+          `engram: warning: embedding failed, storing without vector — ${embeddingResult.error}`,
+        );
+      }
 
       updateMemoryContent(existing.id, {
         content: input.content,
@@ -74,7 +84,7 @@ export async function remember(input: RememberInput): Promise<RememberOutput> {
         );
       }
 
-      return output;
+      return ok(output);
     }
 
     // No existing memory found — fall through to create path
@@ -82,21 +92,31 @@ export async function remember(input: RememberInput): Promise<RememberOutput> {
 
   // Non-upsert idempotency replay: return cached result if key matches
   if (!input.upsert && config.features.idempotency && input.idempotency_key) {
-    const cached = getIdempotencyResult<{ id: string }>(
+    const cachedResult = getIdempotencyResult<{ id: string }>(
       input.idempotency_key,
       "remember",
       scopeIdForIdempotency,
     );
-    if (cached) {
-      return { id: cached.id, status: "created" };
+    if (!cachedResult.ok) {
+      // Corrupt idempotency data — log and continue to create path
+      console.error(`engram: warning: ${cachedResult.error}`);
+    } else if (cachedResult.value !== null) {
+      return ok({ id: cachedResult.value.id, status: "created" });
     }
   }
 
   // Create path
   const id = crypto.randomUUID();
 
-  const embeddingVector = await embed(input.content);
-  const embeddingBuffer = embeddingToBuffer(embeddingVector);
+  const embeddingResult = await embed(input.content);
+  let embeddingBuffer: Buffer | undefined;
+  if (embeddingResult.ok) {
+    embeddingBuffer = embeddingToBuffer(embeddingResult.value);
+  } else {
+    console.error(
+      `engram: warning: embedding failed, storing without vector — ${embeddingResult.error}`,
+    );
+  }
 
   createMemory({
     id,
@@ -131,5 +151,5 @@ export async function remember(input: RememberInput): Promise<RememberOutput> {
     );
   }
 
-  return output;
+  return ok(output);
 }

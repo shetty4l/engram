@@ -258,7 +258,9 @@ describe("Database", () => {
       "scope-b",
     );
 
-    expect(scopeA?.id).toBe("memory-a");
-    expect(scopeB?.id).toBe("memory-b");
+    expect(scopeA?.ok).toBe(true);
+    expect(scopeA?.ok && scopeA.value?.id).toBe("memory-a");
+    expect(scopeB?.ok).toBe(true);
+    expect(scopeB?.ok && scopeB.value?.id).toBe("memory-b");
   });
 });

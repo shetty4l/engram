@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { createDatabaseManager } from "@shetty4l/core/db";
+import { err, ok, type Result } from "@shetty4l/core/result";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { getConfig } from "../config";
@@ -260,23 +261,33 @@ export function updateMemoryContent(
   input: UpdateMemoryContentInput,
 ): Memory {
   const database = getDatabase();
-  const stmt = database.prepare(`
-    UPDATE memories
-    SET content = $content,
-        category = $category,
-        metadata_json = $metadata_json,
-        embedding = $embedding,
-        updated_at = datetime('now')
-    WHERE id = $id
-    RETURNING *
-  `);
-  return stmt.get({
+
+  // Only update embedding if explicitly provided — undefined means "keep existing"
+  const sets = [
+    "content = $content",
+    "category = $category",
+    "metadata_json = $metadata_json",
+    "updated_at = datetime('now')",
+  ];
+  const params: Record<string, string | number | Buffer | null> = {
     $id: id,
     $content: input.content,
     $category: input.category ?? null,
     $metadata_json: input.metadata_json ?? null,
-    $embedding: input.embedding ?? null,
-  }) as Memory;
+  };
+
+  if (input.embedding !== undefined) {
+    sets.push("embedding = $embedding");
+    params.$embedding = input.embedding;
+  }
+
+  const stmt = database.prepare(`
+    UPDATE memories
+    SET ${sets.join(", ")}
+    WHERE id = $id
+    RETURNING *
+  `);
+  return stmt.get(params) as Memory;
 }
 
 function applyMemoryFilters(
@@ -397,8 +408,11 @@ export function searchMemories(
     `);
 
     return stmt.all(params) as SearchResult[];
-  } catch {
+  } catch (e) {
     // FTS5 parse error — fall back to strength-ordered results
+    console.error(
+      `engram: warning: FTS5 search failed, falling back to strength-ordered results — ${e instanceof Error ? e.message : String(e)}`,
+    );
     return getAllMemories(limit, filters).map((m) => ({ ...m, rank: 0 }));
   }
 }
@@ -628,7 +642,7 @@ export function getIdempotencyResult<T>(
   key: string,
   operation: string,
   scope_id?: string,
-): T | null {
+): Result<T | null> {
   const database = getDatabase();
   const stmt = database.prepare(`
     SELECT result_json
@@ -642,13 +656,15 @@ export function getIdempotencyResult<T>(
   }) as { result_json: string } | undefined;
 
   if (!row) {
-    return null;
+    return ok(null);
   }
 
   try {
-    return JSON.parse(row.result_json) as T;
+    return ok(JSON.parse(row.result_json) as T);
   } catch {
-    return null;
+    return err(
+      `corrupt idempotency data: key=${key} operation=${operation} — invalid JSON`,
+    );
   }
 }
 

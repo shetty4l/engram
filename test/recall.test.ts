@@ -10,6 +10,14 @@ import { forget } from "../src/tools/forget";
 import { recall } from "../src/tools/recall";
 import { remember } from "../src/tools/remember";
 
+/** Helper to unwrap Result from remember() — throws in tests if not ok. */
+function unwrap<T>(
+  result: { ok: true; value: T } | { ok: false; error: string },
+): T {
+  if (!result.ok) throw new Error(`expected ok, got err: ${result.error}`);
+  return result.value;
+}
+
 describe("recall tool", () => {
   const originalScopes = process.env.ENGRAM_ENABLE_SCOPES;
 
@@ -71,7 +79,7 @@ describe("recall tool", () => {
   });
 
   test("updates access count on recall", async () => {
-    const { id } = await remember({ content: "Test memory" });
+    const { id } = unwrap(await remember({ content: "Test memory" }));
 
     // Initial access count is 1
     let memory = getMemoryById(id);
@@ -119,10 +127,11 @@ describe("recall tool", () => {
   });
 
   test("does not return forgotten memories", async () => {
-    const keep = await remember({ content: "Keep this memory" });
-    const remove = await remember({ content: "Forget this memory" });
+    const keep = unwrap(await remember({ content: "Keep this memory" }));
+    const remove = unwrap(await remember({ content: "Forget this memory" }));
 
-    await forget({ id: remove.id });
+    const forgetResult = await forget({ id: remove.id });
+    if (!forgetResult.ok) throw new Error("expected ok");
 
     const result = await recall({ query: "memory" });
     const ids = result.memories.map((m) => m.id);
