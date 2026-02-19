@@ -1,6 +1,6 @@
-import { err, ok, type Result } from "@shetty4l/core/result";
+import { ok, type Result } from "@shetty4l/core/result";
 import { getConfig } from "../config";
-import { deleteMemoryById, logMetric } from "../db";
+import { type DeleteScope, deleteMemoryById, logMetric } from "../db";
 
 export interface ForgetInput {
   id: string;
@@ -17,14 +17,17 @@ export async function forget(
   input: ForgetInput,
 ): Promise<Result<ForgetOutput>> {
   const config = getConfig();
-  if (config.features.scopes && !input.scope_id) {
-    return err("scope_id is required when scopes are enabled");
+
+  let scope: DeleteScope;
+  if (!config.features.scopes) {
+    scope = { mode: "any" };
+  } else if (input.scope_id) {
+    scope = { mode: "scoped", scope_id: input.scope_id };
+  } else {
+    scope = { mode: "unscoped" };
   }
 
-  const deleted = deleteMemoryById(
-    input.id,
-    config.features.scopes ? input.scope_id : undefined,
-  );
+  const deleted = deleteMemoryById(input.id, scope);
 
   logMetric({
     session_id: input.session_id,
