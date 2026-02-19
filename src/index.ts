@@ -38,7 +38,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     {
       name: "remember",
       description:
-        "Store a memory for later retrieval. Use this to save decisions, patterns, facts, preferences, or insights.",
+        "Store a memory for later retrieval. Prefer upsert when a memory has a stable identity by providing upsert=true with a deterministic idempotency_key; use normal create for one-off notes.",
       inputSchema: {
         type: "object",
         properties: {
@@ -79,12 +79,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           idempotency_key: {
             type: "string",
-            description: "Optional idempotency key for safe retries",
+            description:
+              "Optional stable identity key for retries and updates (recommended format: <scope>:<category>:<topic-slug>, lowercase and deterministic)",
           },
           upsert: {
             type: "boolean",
             description:
-              "When true, update the existing memory matching the idempotency_key instead of creating a new one. Requires idempotency_key. Uses full-replace semantics: omitted optional fields are set to null.",
+              "When true, update the existing memory matching idempotency_key instead of creating a new one (preferred for durable memories with stable keys). Requires idempotency_key. Full-replace semantics: omitted optional fields are set to null.",
           },
         },
         required: ["content"],
