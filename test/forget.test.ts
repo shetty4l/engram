@@ -66,14 +66,62 @@ describe("forget tool", () => {
     expect(summary.total_recalls).toBe(0);
   });
 
-  test("returns err when scope_id missing and scopes are enabled", async () => {
+  test("deletes unscoped memory without scope_id when scopes enabled", async () => {
+    // Create memory without scope_id (unscoped)
+    const memResult = await remember({ content: "Unscoped memory" });
+    expect(memResult.ok).toBe(true);
+    if (!memResult.ok) throw new Error("expected ok");
+
+    // Enable scopes, then forget without scope_id
+    process.env.ENGRAM_ENABLE_SCOPES = "1";
+    const result = await forget({ id: memResult.value.id });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.value.deleted).toBe(true);
+    expect(getMemoryById(memResult.value.id)).toBeNull();
+  });
+
+  test("cannot delete scoped memory without scope_id", async () => {
     process.env.ENGRAM_ENABLE_SCOPES = "1";
 
-    const result = await forget({ id: "missing-scope" });
+    // Create memory with scope_id
+    const memResult = await remember({
+      content: "Scoped memory",
+      scope_id: "project-a",
+    });
+    expect(memResult.ok).toBe(true);
+    if (!memResult.ok) throw new Error("expected ok");
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toBe("scope_id is required when scopes are enabled");
-    }
+    // Try to forget without scope_id -- should not match (scope_id IS NULL guard)
+    const result = await forget({ id: memResult.value.id });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.value.deleted).toBe(false);
+    expect(getMemoryById(memResult.value.id)).not.toBeNull();
+  });
+
+  test("deletes scoped memory with correct scope_id", async () => {
+    process.env.ENGRAM_ENABLE_SCOPES = "1";
+
+    // Create memory with scope_id
+    const memResult = await remember({
+      content: "Scoped memory",
+      scope_id: "project-a",
+    });
+    expect(memResult.ok).toBe(true);
+    if (!memResult.ok) throw new Error("expected ok");
+
+    // Forget with matching scope_id
+    const result = await forget({
+      id: memResult.value.id,
+      scope_id: "project-a",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.value.deleted).toBe(true);
+    expect(getMemoryById(memResult.value.id)).toBeNull();
   });
 });

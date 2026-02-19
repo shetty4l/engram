@@ -343,14 +343,30 @@ export function updateMemoryAccess(id: string): void {
   stmt.run({ $id: id, $strength: config.decay.accessBoostStrength });
 }
 
-export function deleteMemoryById(id: string, scope_id?: string): boolean {
+export type DeleteScope =
+  | { mode: "any" }
+  | { mode: "scoped"; scope_id: string }
+  | { mode: "unscoped" };
+
+export function deleteMemoryById(id: string, scope: DeleteScope): boolean {
   const database = getDatabase();
-  if (scope_id) {
+  if (scope.mode === "scoped") {
     const scopedStmt = database.prepare(
       "DELETE FROM memories WHERE id = $id AND scope_id = $scope_id",
     );
-    const scopedResult = scopedStmt.run({ $id: id, $scope_id: scope_id });
+    const scopedResult = scopedStmt.run({
+      $id: id,
+      $scope_id: scope.scope_id,
+    });
     return scopedResult.changes > 0;
+  }
+
+  if (scope.mode === "unscoped") {
+    const unscopedStmt = database.prepare(
+      "DELETE FROM memories WHERE id = $id AND scope_id IS NULL",
+    );
+    const unscopedResult = unscopedStmt.run({ $id: id });
+    return unscopedResult.changes > 0;
   }
 
   const stmt = database.prepare("DELETE FROM memories WHERE id = $id");

@@ -46,7 +46,7 @@ describe("http server", () => {
     }
   });
 
-  test("requires scope_id for forget when scopes feature enabled", async () => {
+  test("forget without scope_id targets unscoped memories when scopes enabled", async () => {
     process.env.ENGRAM_ENABLE_SCOPES = "1";
     const server = startHttpServer();
 
@@ -57,9 +57,10 @@ describe("http server", () => {
         body: JSON.stringify({ id: "memory-1" }),
       });
 
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as { error: string };
-      expect(body.error).toBe("scope_id is required when scopes are enabled");
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { id: string; deleted: boolean };
+      expect(body.id).toBe("memory-1");
+      expect(body.deleted).toBe(false);
     } finally {
       server.stop();
     }

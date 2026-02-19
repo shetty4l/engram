@@ -268,7 +268,7 @@ function cmdForget(args: string[], json: boolean): number {
     return 1;
   }
 
-  const deleted = deleteMemoryById(id);
+  const deleted = deleteMemoryById(id, { mode: "any" });
 
   if (json) {
     console.log(JSON.stringify({ id, deleted }, null, 2));

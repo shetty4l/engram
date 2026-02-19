@@ -103,7 +103,7 @@ describe("Database", () => {
   test("deletes an existing memory", () => {
     createMemory({ id: "delete-me", content: "Temporary memory" });
 
-    const deleted = deleteMemoryById("delete-me");
+    const deleted = deleteMemoryById("delete-me", { mode: "any" });
 
     expect(deleted).toBe(true);
     expect(getMemoryById("delete-me")).toBeNull();
@@ -111,7 +111,7 @@ describe("Database", () => {
   });
 
   test("delete is idempotent for missing memory", () => {
-    const deleted = deleteMemoryById("missing-memory");
+    const deleted = deleteMemoryById("missing-memory", { mode: "any" });
 
     expect(deleted).toBe(false);
   });
@@ -122,10 +122,32 @@ describe("Database", () => {
     const beforeDelete = searchMemories("budget", 10);
     expect(beforeDelete.map((m) => m.id)).toContain("search-1");
 
-    deleteMemoryById("search-1");
+    deleteMemoryById("search-1", { mode: "any" });
 
     const afterDelete = searchMemories("budget", 10);
     expect(afterDelete.map((m) => m.id)).not.toContain("search-1");
+  });
+
+  test("deleteMemoryById with unscoped mode deletes unscoped memory", () => {
+    createMemory({ id: "unscoped-1", content: "No scope" });
+
+    const deleted = deleteMemoryById("unscoped-1", { mode: "unscoped" });
+
+    expect(deleted).toBe(true);
+    expect(getMemoryById("unscoped-1")).toBeNull();
+  });
+
+  test("deleteMemoryById with unscoped mode does not delete scoped memory", () => {
+    createMemory({
+      id: "scoped-1",
+      content: "Has scope",
+      scope_id: "project-a",
+    });
+
+    const deleted = deleteMemoryById("scoped-1", { mode: "unscoped" });
+
+    expect(deleted).toBe(false);
+    expect(getMemoryById("scoped-1")).not.toBeNull();
   });
 
   test("migrates legacy memories schema before creating scoped indexes", () => {
