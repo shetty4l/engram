@@ -7,19 +7,23 @@ import {
   type FeatureExtractionPipeline,
   pipeline,
 } from "@huggingface/transformers";
+import { err, ok, type Result } from "@shetty4l/core/result";
 import { getConfig } from "./config";
 
 let embedder: FeatureExtractionPipeline | null = null;
 let isInitializing = false;
-let initPromise: Promise<FeatureExtractionPipeline> | null = null;
+let initPromise: Promise<Result<FeatureExtractionPipeline>> | null = null;
 
 /**
  * Get or initialize the embedding pipeline.
  * Lazy-loads the model on first use.
+ * Returns Err on model load failure instead of throwing.
  */
-export async function getEmbedder(): Promise<FeatureExtractionPipeline> {
+export async function getEmbedder(): Promise<
+  Result<FeatureExtractionPipeline>
+> {
   if (embedder) {
-    return embedder;
+    return ok(embedder);
   }
 
   // Prevent multiple simultaneous initializations
@@ -30,17 +34,30 @@ export async function getEmbedder(): Promise<FeatureExtractionPipeline> {
   isInitializing = true;
   const config = getConfig();
 
-  initPromise = (async () => {
-    const pipe = await pipeline("feature-extraction", config.embedding.model, {
-      dtype: "q8" as const, // Quantized for smaller size
-      cache_dir: config.embedding.cacheDir,
-    });
-    return pipe as FeatureExtractionPipeline;
+  initPromise = (async (): Promise<Result<FeatureExtractionPipeline>> => {
+    try {
+      const pipe = await pipeline(
+        "feature-extraction",
+        config.embedding.model,
+        {
+          dtype: "q8" as const, // Quantized for smaller size
+          cache_dir: config.embedding.cacheDir,
+        },
+      );
+      return ok(pipe as FeatureExtractionPipeline);
+    } catch (e) {
+      return err(
+        `embedding model load failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   })();
 
   try {
-    embedder = await initPromise;
-    return embedder;
+    const result = await initPromise;
+    if (result.ok) {
+      embedder = result.value;
+    }
+    return result;
   } finally {
     isInitializing = false;
     initPromise = null;
@@ -49,35 +66,58 @@ export async function getEmbedder(): Promise<FeatureExtractionPipeline> {
 
 /**
  * Generate embedding for a text string.
- * Returns normalized Float32Array suitable for cosine similarity.
+ * Returns normalized Float32Array suitable for cosine similarity,
+ * or Err on pipeline failure.
  */
-export async function embed(text: string): Promise<Float32Array> {
-  const extractor = await getEmbedder();
-  const output = await extractor(text, {
-    pooling: "mean",
-    normalize: true,
-  });
-  return output.data as Float32Array;
+export async function embed(text: string): Promise<Result<Float32Array>> {
+  const extractorResult = await getEmbedder();
+  if (!extractorResult.ok) {
+    return extractorResult;
+  }
+
+  try {
+    const output = await extractorResult.value(text, {
+      pooling: "mean",
+      normalize: true,
+    });
+    return ok(output.data as Float32Array);
+  } catch (e) {
+    return err(
+      `embedding failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
 }
 
 /**
  * Generate embeddings for multiple texts.
  * More efficient than calling embed() multiple times.
+ * Returns Err if the embedder cannot be loaded.
  */
-export async function embedBatch(texts: string[]): Promise<Float32Array[]> {
-  const extractor = await getEmbedder();
+export async function embedBatch(
+  texts: string[],
+): Promise<Result<Float32Array[]>> {
+  const extractorResult = await getEmbedder();
+  if (!extractorResult.ok) {
+    return extractorResult;
+  }
+
   const results: Float32Array[] = [];
 
   // Process one at a time to avoid memory issues with large batches
-  for (const text of texts) {
-    const output = await extractor(text, {
-      pooling: "mean",
-      normalize: true,
-    });
-    results.push(output.data as Float32Array);
+  try {
+    for (const text of texts) {
+      const output = await extractorResult.value(text, {
+        pooling: "mean",
+        normalize: true,
+      });
+      results.push(output.data as Float32Array);
+    }
+    return ok(results);
+  } catch (e) {
+    return err(
+      `batch embedding failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
-
-  return results;
 }
 
 /**
@@ -132,9 +172,14 @@ export function isEmbedderLoaded(): boolean {
 /**
  * Preload the embedder model.
  * Call this at startup to avoid latency on first embed() call.
+ * Returns Err if the model cannot be loaded.
  */
-export async function preloadEmbedder(): Promise<void> {
-  await getEmbedder();
+export async function preloadEmbedder(): Promise<Result<void>> {
+  const result = await getEmbedder();
+  if (!result.ok) {
+    return result;
+  }
+  return ok(undefined);
 }
 
 /**
