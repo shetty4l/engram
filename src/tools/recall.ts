@@ -68,7 +68,17 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
   }
 
   // Generate query embedding
-  const queryEmbedding = await embed(input.query);
+  const queryEmbeddingResult = await embed(input.query);
+
+  // If embedding fails, fall back to FTS5 search
+  if (!queryEmbeddingResult.ok) {
+    console.error(
+      `engram: warning: query embedding failed, falling back to FTS5 — ${queryEmbeddingResult.error}`,
+    );
+    return recallFTS5(input, limit, minStrength, filters);
+  }
+
+  const queryEmbedding = queryEmbeddingResult.value;
 
   // Compute similarity for all memories with embeddings
   // Apply decay to strength before filtering

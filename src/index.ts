@@ -16,6 +16,14 @@ import { type RecallInput, recall } from "./tools/recall";
 import { type RememberInput, remember } from "./tools/remember";
 import { VERSION } from "./version";
 
+/** Return an MCP error response (isError: true) for validation failures. */
+function mcpError(message: string) {
+  return {
+    content: [{ type: "text" as const, text: message }],
+    isError: true,
+  };
+}
+
 // Initialize database on startup
 initDatabase();
 
@@ -238,17 +246,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "remember": {
       const input = args as unknown as RememberInput;
       if (!input.content) {
-        throw new Error("content is required");
-      }
-      if (input.upsert && !input.idempotency_key) {
-        throw new Error("upsert requires idempotency_key");
+        return mcpError("content is required");
       }
       const result = await remember(input);
+      if (!result.ok) {
+        return mcpError(result.error);
+      }
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(result, null, 2),
+            text: JSON.stringify(result.value, null, 2),
           },
         ],
       };
@@ -257,7 +265,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "recall": {
       const input = args as unknown as RecallInput;
       if (input.query === undefined) {
-        throw new Error("query is required");
+        return mcpError("query is required");
       }
       const result = await recall(input);
       return {
@@ -273,18 +281,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "forget": {
       const input = args as unknown as ForgetInput;
       if (!input.id) {
-        throw new Error("id is required");
-      }
-      const config = getConfig();
-      if (config.features.scopes && !input.scope_id) {
-        throw new Error("scope_id is required when scopes are enabled");
+        return mcpError("id is required");
       }
       const result = await forget(input);
+      if (!result.ok) {
+        return mcpError(result.error);
+      }
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(result, null, 2),
+            text: JSON.stringify(result.value, null, 2),
           },
         ],
       };
@@ -305,7 +312,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "context_hydrate": {
       const config = getConfig();
       if (!config.features.contextHydration) {
-        throw new Error("context_hydrate is disabled");
+        return mcpError("context_hydrate is disabled");
       }
 
       const input = (args ?? {}) as unknown as ContextHydrateInput;
@@ -321,7 +328,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     default:
-      throw new Error(`Unknown tool: ${name}`);
+      return mcpError(`Unknown tool: ${name}`);
   }
 });
 

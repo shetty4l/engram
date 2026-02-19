@@ -1,3 +1,4 @@
+import { err, ok, type Result } from "@shetty4l/core/result";
 import { getConfig } from "../config";
 import { deleteMemoryById, logMetric } from "../db";
 
@@ -12,10 +13,12 @@ export interface ForgetOutput {
   deleted: boolean;
 }
 
-export async function forget(input: ForgetInput): Promise<ForgetOutput> {
+export async function forget(
+  input: ForgetInput,
+): Promise<Result<ForgetOutput>> {
   const config = getConfig();
   if (config.features.scopes && !input.scope_id) {
-    throw new Error("scope_id is required when scopes are enabled");
+    return err("scope_id is required when scopes are enabled");
   }
 
   const deleted = deleteMemoryById(
@@ -29,8 +32,8 @@ export async function forget(input: ForgetInput): Promise<ForgetOutput> {
     memory_id: input.id,
   });
 
-  return {
+  return ok({
     id: input.id,
     deleted,
-  };
+  });
 }

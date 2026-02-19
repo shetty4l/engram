@@ -46,6 +46,46 @@ function getDataDir(): string {
   return join(homedir(), ".local", "share", "engram");
 }
 
+/**
+ * Parse a float from an env var, returning the default on NaN.
+ * Logs a warning if the value is present but not a valid number.
+ */
+function parseFloatEnv(
+  envName: string,
+  raw: string | undefined,
+  defaultValue: number,
+): number {
+  if (raw === undefined) return defaultValue;
+  const parsed = Number.parseFloat(raw);
+  if (Number.isNaN(parsed)) {
+    console.error(
+      `engram: warning: ${envName}="${raw}" is not a valid number, using default ${defaultValue}`,
+    );
+    return defaultValue;
+  }
+  return parsed;
+}
+
+/**
+ * Parse a port from an env var, returning the default on invalid input.
+ * Valid range: 0-65535 (0 = OS-assigned).
+ */
+function parsePortEnv(
+  envName: string,
+  raw: string | undefined,
+  defaultValue: number,
+): number {
+  if (raw === undefined) return defaultValue;
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed < 0 || parsed > 65535) {
+    console.error(
+      `engram: warning: ${envName}="${raw}" is not a valid port (0-65535), using default ${defaultValue}`,
+    );
+    return defaultValue;
+  }
+  return parsed;
+}
+
 export function getConfig(): Config {
   const dataDir = getDataDir();
 
@@ -60,17 +100,23 @@ export function getConfig(): Config {
       minStrength: 0.1,
     },
     decay: {
-      rate: process.env.ENGRAM_DECAY_RATE
-        ? parseFloat(process.env.ENGRAM_DECAY_RATE)
-        : 0.95,
-      accessBoostStrength: process.env.ENGRAM_ACCESS_BOOST_STRENGTH
-        ? parseFloat(process.env.ENGRAM_ACCESS_BOOST_STRENGTH)
-        : 1.0,
+      rate: parseFloatEnv(
+        "ENGRAM_DECAY_RATE",
+        process.env.ENGRAM_DECAY_RATE,
+        0.95,
+      ),
+      accessBoostStrength: parseFloatEnv(
+        "ENGRAM_ACCESS_BOOST_STRENGTH",
+        process.env.ENGRAM_ACCESS_BOOST_STRENGTH,
+        1.0,
+      ),
     },
     http: {
-      port: process.env.ENGRAM_HTTP_PORT
-        ? parseInt(process.env.ENGRAM_HTTP_PORT, 10)
-        : 7749,
+      port: parsePortEnv(
+        "ENGRAM_HTTP_PORT",
+        process.env.ENGRAM_HTTP_PORT,
+        7749,
+      ),
       host: process.env.ENGRAM_HTTP_HOST || "127.0.0.1",
     },
     embedding: {
