@@ -1,5 +1,8 @@
+import { createLogger } from "@shetty4l/core/log";
 import { homedir } from "os";
 import { join } from "path";
+
+const log = createLogger("engram");
 
 export interface Config {
   database: {
@@ -58,8 +61,8 @@ function parseFloatEnv(
   if (raw === undefined) return defaultValue;
   const parsed = Number.parseFloat(raw);
   if (Number.isNaN(parsed)) {
-    console.error(
-      `engram: warning: ${envName}="${raw}" is not a valid number, using default ${defaultValue}`,
+    log(
+      `warning: ${envName}="${raw}" is not a valid number, using default ${defaultValue}`,
     );
     return defaultValue;
   }
@@ -78,8 +81,8 @@ function parsePortEnv(
   if (raw === undefined) return defaultValue;
   const parsed = Number.parseInt(raw, 10);
   if (Number.isNaN(parsed) || parsed < 0 || parsed > 65535) {
-    console.error(
-      `engram: warning: ${envName}="${raw}" is not a valid port (0-65535), using default ${defaultValue}`,
+    log(
+      `warning: ${envName}="${raw}" is not a valid port (0-65535), using default ${defaultValue}`,
     );
     return defaultValue;
   }
@@ -130,4 +133,15 @@ export function getConfig(): Config {
       workItems: process.env.ENGRAM_ENABLE_WORK_ITEMS !== "0",
     },
   };
+}
+
+/**
+ * Log active feature flags. Call once at startup.
+ */
+export function logFeatureFlags(): void {
+  const { features } = getConfig();
+  const enabled = Object.entries(features)
+    .filter(([, v]) => v)
+    .map(([k]) => k);
+  log(`features: ${enabled.length > 0 ? enabled.join(", ") : "none"}`);
 }

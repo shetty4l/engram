@@ -12,8 +12,9 @@
  * Used by OpenCode plugin for silent memory extraction.
  */
 
+import { createLogger } from "@shetty4l/core/log";
 import { getCapabilities } from "./capabilities";
-import { getConfig } from "./config";
+import { getConfig, logFeatureFlags } from "./config";
 import { initDatabase } from "./db";
 import {
   type ContextHydrateInput,
@@ -23,6 +24,8 @@ import { type ForgetInput, forget } from "./tools/forget";
 import { type RecallInput, recall } from "./tools/recall";
 import { type RememberInput, remember } from "./tools/remember";
 import { VERSION } from "./version";
+
+const log = createLogger("engram");
 
 const startTime = Date.now();
 
@@ -44,7 +47,8 @@ export function startHttpServer(): HttpServer {
     fetch: handleRequest,
   });
 
-  console.error(`engram v${VERSION}: listening on http://${host}:${port}`);
+  log(`v${VERSION}: listening on http://${host}:${port}`);
+  logFeatureFlags();
 
   return {
     port: server.port ?? port,
@@ -63,7 +67,7 @@ async function handleRequest(req: Request): Promise<Response> {
   const latency = (performance.now() - start).toFixed(0);
   // Skip logging CORS preflight and health checks to reduce noise
   if (method !== "OPTIONS" && path !== "/health") {
-    console.error(`engram: ${method} ${path} ${response.status} ${latency}ms`);
+    log(`${method} ${path} ${response.status} ${latency}ms`);
   }
 
   return response;
@@ -198,7 +202,9 @@ async function routeRequest(
     // Not found
     return Response.json({ error: "Not found" }, { status: 404, headers });
   } catch (error) {
-    console.error("engram: unexpected error:", error);
+    log(
+      `unexpected error: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return Response.json(
       { error: "Internal server error" },
       { status: 500, headers },

@@ -7,8 +7,11 @@ import {
   type FeatureExtractionPipeline,
   pipeline,
 } from "@huggingface/transformers";
+import { createLogger } from "@shetty4l/core/log";
 import { err, ok, type Result } from "@shetty4l/core/result";
 import { getConfig } from "./config";
+
+const log = createLogger("engram");
 
 let embedder: FeatureExtractionPipeline | null = null;
 let isInitializing = false;
@@ -36,6 +39,8 @@ export async function getEmbedder(): Promise<
 
   initPromise = (async (): Promise<Result<FeatureExtractionPipeline>> => {
     try {
+      log(`loading embedding model: ${config.embedding.model}`);
+      const start = Date.now();
       const pipe = await pipeline(
         "feature-extraction",
         config.embedding.model,
@@ -44,6 +49,7 @@ export async function getEmbedder(): Promise<
           cache_dir: config.embedding.cacheDir,
         },
       );
+      log(`embedding model loaded in ${Date.now() - start}ms`);
       return ok(pipe as FeatureExtractionPipeline);
     } catch (e) {
       return err(
@@ -76,10 +82,15 @@ export async function embed(text: string): Promise<Result<Float32Array>> {
   }
 
   try {
+    const start = performance.now();
     const output = await extractorResult.value(text, {
       pooling: "mean",
       normalize: true,
     });
+    const elapsed = performance.now() - start;
+    if (elapsed > 100) {
+      log(`warning: slow embedding inference: ${elapsed.toFixed(0)}ms`);
+    }
     return ok(output.data as Float32Array);
   } catch (e) {
     return err(

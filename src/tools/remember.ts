@@ -1,3 +1,4 @@
+import { createLogger } from "@shetty4l/core/log";
 import { err, ok, type Result } from "@shetty4l/core/result";
 import { getConfig } from "../config";
 import {
@@ -9,6 +10,8 @@ import {
   updateMemoryContent,
 } from "../db";
 import { embed, embeddingToBuffer } from "../embedding";
+
+const log = createLogger("engram");
 
 export interface RememberInput {
   content: string;
@@ -53,8 +56,8 @@ export async function remember(
       if (embeddingResult.ok) {
         embeddingBuffer = embeddingToBuffer(embeddingResult.value);
       } else {
-        console.error(
-          `engram: warning: embedding failed, storing without vector — ${embeddingResult.error}`,
+        log(
+          `warning: embedding failed, storing without vector — ${embeddingResult.error}`,
         );
       }
 
@@ -99,7 +102,7 @@ export async function remember(
     );
     if (!cachedResult.ok) {
       // Corrupt idempotency data — log and continue to create path
-      console.error(`engram: warning: ${cachedResult.error}`);
+      log(`warning: ${cachedResult.error}`);
     } else if (cachedResult.value !== null) {
       return ok({ id: cachedResult.value.id, status: "created" });
     }
@@ -113,8 +116,8 @@ export async function remember(
   if (embeddingResult.ok) {
     embeddingBuffer = embeddingToBuffer(embeddingResult.value);
   } else {
-    console.error(
-      `engram: warning: embedding failed, storing without vector — ${embeddingResult.error}`,
+    log(
+      `warning: embedding failed, storing without vector — ${embeddingResult.error}`,
     );
   }
 
