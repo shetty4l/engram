@@ -73,6 +73,7 @@ Usage:
   engram status          Show daemon status
   engram restart         Restart daemon
   engram health          Check health of running instance
+  engram config          Show active configuration
   engram logs [n]        Show last n log lines (default: 20)
   engram version         Show version
 
@@ -457,9 +458,35 @@ function cmdPrune(args: string[], json: boolean): number {
   return 0;
 }
 
+function cmdConfig(_args: string[], json: boolean): void {
+  const config = getConfig();
+
+  if (json) {
+    console.log(JSON.stringify(config, null, 2));
+    return;
+  }
+
+  console.log(`\nDatabase: ${config.database.path}`);
+  console.log(`HTTP: ${config.http.host}:${config.http.port}`);
+  console.log(`Embedding model: ${config.embedding.model}`);
+  console.log(`Embedding cache: ${config.embedding.cacheDir}`);
+  console.log(`Decay rate: ${config.decay.rate}`);
+  console.log(`Access boost: ${config.decay.accessBoostStrength}`);
+  console.log(`Default recall limit: ${config.memory.defaultRecallLimit}`);
+  console.log(`Min strength: ${config.memory.minStrength}`);
+
+  const enabled = Object.entries(config.features)
+    .filter(([, v]) => v)
+    .map(([k]) => k);
+  console.log(
+    `Features: ${enabled.length > 0 ? enabled.join(", ") : "(none)"}`,
+  );
+  console.log();
+}
+
 function cmdServe(): void {
   const server = startHttpServer();
-  onShutdown(() => server.stop(), { name: "engram" });
+  onShutdown(() => server.stop(), { name: "engram", timeoutMs: 15_000 });
 }
 
 async function cmdStart(): Promise<number> {
@@ -567,6 +594,7 @@ runCli({
     status: cmdStatus,
     restart: () => cmdRestart(),
     health: cmdHealth,
+    config: cmdConfig,
     logs: createLogsCommand({
       logFile: LOG_FILE,
       emptyMessage: "No log entries yet.",
