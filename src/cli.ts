@@ -32,7 +32,7 @@ import { createLogsCommand, formatUptime, runCli } from "@shetty4l/core/cli";
 import { getConfigDir } from "@shetty4l/core/config";
 import { onShutdown } from "@shetty4l/core/signals";
 import { join } from "path";
-import { getConfig } from "./config";
+import { getConfig, loadConfig } from "./config";
 import { getDaemon } from "./daemon";
 import {
   deleteMemoryById,
@@ -459,14 +459,28 @@ function cmdPrune(args: string[], json: boolean): number {
 }
 
 function cmdConfig(_args: string[], json: boolean): void {
-  const config = getConfig();
-
-  if (json) {
-    console.log(JSON.stringify(config, null, 2));
+  const result = loadConfig();
+  if (!result.ok) {
+    console.error(`config error: ${result.error}`);
     return;
   }
 
-  console.log(`\nDatabase: ${config.database.path}`);
+  const { config, source, path } = result.value;
+
+  if (json) {
+    console.log(
+      JSON.stringify({ ...config, _source: source, _path: path }, null, 2),
+    );
+    return;
+  }
+
+  console.log(
+    `\nConfig source: ${source === "file" ? path : "defaults (no config file)"}`,
+  );
+  if (source === "defaults") {
+    console.log(`Config path: ${path} (not found)`);
+  }
+  console.log(`Database: ${config.database.path}`);
   console.log(`HTTP: ${config.http.host}:${config.http.port}`);
   console.log(`Embedding model: ${config.embedding.model}`);
   console.log(`Embedding cache: ${config.embedding.cacheDir}`);

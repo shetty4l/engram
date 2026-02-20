@@ -7,11 +7,17 @@
  * - POST /forget - Delete a memory by ID
  * - POST /context/hydrate - Hydrate assistant context (feature-flagged)
  * - GET /capabilities - Feature discovery
- * - GET /health - Health check
+ * - GET /health - Health check (handled by core)
  *
  * Used by OpenCode plugin for silent memory extraction.
  */
 
+import {
+  createServer,
+  type HttpServer,
+  jsonError,
+  jsonOk,
+} from "@shetty4l/core/http";
 import { createLogger } from "@shetty4l/core/log";
 import { getCapabilities } from "./capabilities";
 import { getConfig, logFeatureFlags } from "./config";
@@ -27,11 +33,13 @@ import { VERSION } from "./version";
 
 const log = createLogger("engram");
 
-const startTime = Date.now();
-
-interface HttpServer {
-  port: number;
-  stop: () => void;
+/** Parse JSON body from request, returning a 400 jsonError on failure. */
+async function parseJsonBody<T>(req: Request): Promise<T | Response> {
+  try {
+    return (await req.json()) as T;
+  } catch {
+    return jsonError(400, "Invalid JSON body");
+  }
 }
 
 export function startHttpServer(): HttpServer {
@@ -41,173 +49,100 @@ export function startHttpServer(): HttpServer {
   // Ensure database is initialized
   initDatabase();
 
-  const server = Bun.serve({
+  const server = createServer({
+    name: "engram",
     port,
-    hostname: host,
-    fetch: handleRequest,
+    host,
+    version: VERSION,
+    onRequest: async (req: Request, url: URL) => {
+      const start = performance.now();
+      const response = await routeRequest(req, url);
+
+      if (response) {
+        const latency = (performance.now() - start).toFixed(0);
+        log(`${req.method} ${url.pathname} ${response.status} ${latency}ms`);
+      }
+
+      return response;
+    },
   });
 
-  log(`v${VERSION}: listening on http://${host}:${port}`);
+  log(`v${VERSION}: listening on http://${host}:${server.port}`);
   logFeatureFlags();
 
-  return {
-    port: server.port ?? port,
-    stop: () => server.stop(),
-  };
+  return server;
 }
 
-async function handleRequest(req: Request): Promise<Response> {
-  const url = new URL(req.url);
+async function routeRequest(req: Request, url: URL): Promise<Response | null> {
   const path = url.pathname;
   const method = req.method;
-  const start = performance.now();
 
-  const response = await routeRequest(req, path, method);
-
-  const latency = (performance.now() - start).toFixed(0);
-  // Skip logging CORS preflight and health checks to reduce noise
-  if (method !== "OPTIONS" && path !== "/health") {
-    log(`${method} ${path} ${response.status} ${latency}ms`);
+  if (path === "/capabilities" && method === "GET") {
+    return jsonOk(getCapabilities(VERSION));
   }
 
-  return response;
-}
+  // Remember endpoint
+  if (path === "/remember" && method === "POST") {
+    const bodyOrError = await parseJsonBody<RememberInput>(req);
+    if (bodyOrError instanceof Response) return bodyOrError;
+    const body = bodyOrError;
 
-/** Parse JSON body from request, returning a 400 Response on failure. */
-async function parseJsonBody<T>(
-  req: Request,
-  headers: Record<string, string>,
-): Promise<T | Response> {
-  try {
-    return (await req.json()) as T;
-  } catch {
-    return Response.json(
-      { error: "Invalid JSON body" },
-      { status: 400, headers },
-    );
-  }
-}
+    if (!body.content) {
+      return jsonError(400, "content is required");
+    }
 
-async function routeRequest(
-  req: Request,
-  path: string,
-  method: string,
-): Promise<Response> {
-  // CORS headers for local development
-  const headers = {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  };
-
-  // Handle preflight requests
-  if (method === "OPTIONS") {
-    return new Response(null, { status: 204, headers });
+    const result = await remember(body);
+    if (!result.ok) {
+      return jsonError(400, result.error);
+    }
+    return jsonOk(result.value);
   }
 
-  try {
-    // Health check
-    if (path === "/health" && method === "GET") {
-      return Response.json(
-        {
-          status: "healthy",
-          version: VERSION,
-          uptime: Math.floor((Date.now() - startTime) / 1000),
-        },
-        { headers },
-      );
+  // Recall endpoint
+  if (path === "/recall" && method === "POST") {
+    const bodyOrError = await parseJsonBody<RecallInput>(req);
+    if (bodyOrError instanceof Response) return bodyOrError;
+    const body = bodyOrError;
+
+    if (body.query === undefined) {
+      return jsonError(400, "query is required");
     }
 
-    if (path === "/capabilities" && method === "GET") {
-      return Response.json(getCapabilities(VERSION), { headers });
-    }
-
-    // Remember endpoint
-    if (path === "/remember" && method === "POST") {
-      const bodyOrError = await parseJsonBody<RememberInput>(req, headers);
-      if (bodyOrError instanceof Response) return bodyOrError;
-      const body = bodyOrError;
-
-      if (!body.content) {
-        return Response.json(
-          { error: "content is required" },
-          { status: 400, headers },
-        );
-      }
-
-      const result = await remember(body);
-      if (!result.ok) {
-        return Response.json({ error: result.error }, { status: 400, headers });
-      }
-      return Response.json(result.value, { headers });
-    }
-
-    // Recall endpoint
-    if (path === "/recall" && method === "POST") {
-      const bodyOrError = await parseJsonBody<RecallInput>(req, headers);
-      if (bodyOrError instanceof Response) return bodyOrError;
-      const body = bodyOrError;
-
-      if (body.query === undefined) {
-        return Response.json(
-          { error: "query is required" },
-          { status: 400, headers },
-        );
-      }
-
-      const result = await recall(body);
-      return Response.json(result, { headers });
-    }
-
-    // Forget endpoint
-    if (path === "/forget" && method === "POST") {
-      const bodyOrError = await parseJsonBody<ForgetInput>(req, headers);
-      if (bodyOrError instanceof Response) return bodyOrError;
-      const body = bodyOrError;
-
-      if (!body.id) {
-        return Response.json(
-          { error: "id is required" },
-          { status: 400, headers },
-        );
-      }
-
-      const result = await forget(body);
-      if (!result.ok) {
-        return Response.json({ error: result.error }, { status: 400, headers });
-      }
-      return Response.json(result.value, { headers });
-    }
-
-    if (path === "/context/hydrate" && method === "POST") {
-      const featureConfig = getConfig();
-      if (!featureConfig.features.contextHydration) {
-        return Response.json(
-          { error: "context hydration is disabled" },
-          { status: 403, headers },
-        );
-      }
-
-      const bodyOrError = await parseJsonBody<ContextHydrateInput>(
-        req,
-        headers,
-      );
-      if (bodyOrError instanceof Response) return bodyOrError;
-
-      const result = await contextHydrate(bodyOrError);
-      return Response.json(result, { headers });
-    }
-
-    // Not found
-    return Response.json({ error: "Not found" }, { status: 404, headers });
-  } catch (error) {
-    log(
-      `unexpected error: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return Response.json(
-      { error: "Internal server error" },
-      { status: 500, headers },
-    );
+    const result = await recall(body);
+    return jsonOk(result);
   }
+
+  // Forget endpoint
+  if (path === "/forget" && method === "POST") {
+    const bodyOrError = await parseJsonBody<ForgetInput>(req);
+    if (bodyOrError instanceof Response) return bodyOrError;
+    const body = bodyOrError;
+
+    if (!body.id) {
+      return jsonError(400, "id is required");
+    }
+
+    const result = await forget(body);
+    if (!result.ok) {
+      return jsonError(400, result.error);
+    }
+    return jsonOk(result.value);
+  }
+
+  // Context hydrate endpoint
+  if (path === "/context/hydrate" && method === "POST") {
+    const featureConfig = getConfig();
+    if (!featureConfig.features.contextHydration) {
+      return jsonError(403, "context hydration is disabled");
+    }
+
+    const bodyOrError = await parseJsonBody<ContextHydrateInput>(req);
+    if (bodyOrError instanceof Response) return bodyOrError;
+
+    const result = await contextHydrate(bodyOrError);
+    return jsonOk(result);
+  }
+
+  // Not found — return null so core's createServer generates the 404
+  return null;
 }
