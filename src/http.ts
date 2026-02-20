@@ -8,8 +8,6 @@
  * - POST /context/hydrate - Hydrate assistant context (feature-flagged)
  * - GET /capabilities - Feature discovery
  * - GET /health - Health check (handled by core)
- *
- * Used by OpenCode plugin for silent memory extraction.
  */
 
 import {

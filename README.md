@@ -71,33 +71,22 @@ The script creates `~/.engram/` with your key and instance info.
 
 ## OpenCode Setup
 
-Use this flow when running Engram with OpenCode.
+Add Engram as an MCP server in OpenCode.
 
 ### Prerequisites
 
 - `bun` installed
-- `opencode` installed
 - `engram` CLI on PATH (installed automatically by `install.sh`, or run `bun link` from a local clone)
 
-### 1) Sync the OpenCode plugin
+### Add Engram MCP server to OpenCode
 
-From the repo root:
-
-```bash
-bun run setup
-```
-
-This copies `opencode/plugins/engram.ts` to `~/.config/opencode/plugins/engram.ts`.
-
-### 2) Add Engram MCP server to OpenCode
-
-Create or update `~/.config/opencode/opencode.json` with this block:
+Create or update `~/.config/opencode/opencode.json`:
 
 ```bash
 bun run opencode:config
 ```
 
-This prints a ready-to-paste OpenCode config block with your local absolute path.
+This prints a ready-to-paste config block with your local absolute path:
 
 ```json
 {
@@ -111,26 +100,11 @@ This prints a ready-to-paste OpenCode config block with your local absolute path
 }
 ```
 
-Replace `/path/to/engram` with your local checkout path.
-
-### 3) Restart OpenCode
-
-Restart OpenCode so it loads the plugin and MCP server config.
-
-### Verification
-
-```bash
-engram status
-```
-
-- If the daemon is not running yet, that is OK.
-- The plugin auto-starts the daemon on `session.idle` or `experimental.session.compacting`.
-- Data and runtime files live in `~/.local/share/engram/` (DB, PID, logs).
+Restart OpenCode to load the MCP server.
 
 ### Troubleshooting
 
 - `engram: command not found`: If installed from release, ensure `~/.local/bin` is in your PATH. If running from a clone, run `bun link` from the repo.
-- Plugin not loading: verify `~/.config/opencode/plugins/engram.ts` exists, then rerun `bun run setup` and restart OpenCode.
 - Daemon issues:
   - `engram status`
   - `engram restart`

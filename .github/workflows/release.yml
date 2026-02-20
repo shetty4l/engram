@@ -15,5 +15,4 @@ jobs:
     uses: shetty4l/core/.github/workflows/release-shared.yml@main
     with:
       service-name: engram
-      extra-tarball-paths: "opencode/"
       attach-install-sh: true
