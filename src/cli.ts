@@ -28,7 +28,12 @@
  */
 
 import type { CommandHandler } from "@shetty4l/core/cli";
-import { createLogsCommand, formatUptime, runCli } from "@shetty4l/core/cli";
+import {
+  createDaemonCommands,
+  createHealthCommand,
+  createLogsCommand,
+  runCli,
+} from "@shetty4l/core/cli";
 import { getConfigDir } from "@shetty4l/core/config";
 import { onShutdown } from "@shetty4l/core/signals";
 import { join } from "path";
@@ -503,97 +508,16 @@ function cmdServe(): void {
   onShutdown(() => server.stop(), { name: "engram", timeoutMs: 15_000 });
 }
 
-async function cmdStart(): Promise<number> {
-  const daemon = getDaemon();
-  const result = await daemon.start();
-  if (!result.ok) {
-    console.error(result.error);
-    return 1;
-  }
-  console.log(
-    `engram daemon started (PID: ${result.value.pid}, port: ${result.value.port ?? "unknown"})`,
-  );
-  return 0;
-}
+const daemonCmds = createDaemonCommands({ name: "engram", getDaemon });
 
-async function cmdStop(): Promise<number> {
-  const daemon = getDaemon();
-  const result = await daemon.stop();
-  if (!result.ok) {
-    console.error(result.error);
-    return 1;
-  }
-  console.log(`engram daemon stopped (was PID: ${result.value.pid})`);
-  return 0;
-}
-
-async function cmdStatus(_args: string[], json: boolean): Promise<number> {
-  const daemon = getDaemon();
-  const status = await daemon.status();
-
-  if (json) {
-    console.log(JSON.stringify(status, null, 2));
-    return status.running ? 0 : 1;
-  }
-
-  if (status.running) {
-    const uptimeStr = status.uptime ? formatUptime(status.uptime) : "unknown";
-    console.log(
-      `engram is running (PID: ${status.pid}, port: ${status.port}, uptime: ${uptimeStr})`,
-    );
-    return 0;
-  }
-
-  console.log("engram is not running");
-  return 1;
-}
-
-async function cmdRestart(): Promise<number> {
-  const daemon = getDaemon();
-  const result = await daemon.restart();
-  if (!result.ok) {
-    console.error(result.error);
-    return 1;
-  }
-  console.log(`engram daemon restarted (PID: ${result.value.pid})`);
-  return 0;
-}
-
-async function cmdHealth(_args: string[], json: boolean): Promise<number> {
-  const config = getConfig();
-  const { port, host } = config.http;
-
-  let response: Response;
-  try {
-    response = await fetch(`http://${host}:${port}/health`);
-  } catch {
-    if (json) {
-      console.log(JSON.stringify({ error: "Server not reachable", port }));
-    } else {
-      console.error(`engram is not running on port ${port}`);
-    }
-    return 1;
-  }
-
-  const data = (await response.json()) as {
-    status: string;
-    version: string;
-    uptime: number;
-  };
-
-  if (json) {
-    console.log(JSON.stringify(data, null, 2));
-    return data.status === "healthy" ? 0 : 1;
-  }
-
-  console.log(
-    `\nStatus:  ${data.status === "healthy" ? "healthy" : "degraded"}`,
-  );
-  console.log(`Version: ${data.version}`);
-  console.log(`Uptime:  ${formatUptime(data.uptime)}\n`);
-
-  return data.status === "healthy" ? 0 : 1;
-}
+const cmdHealth = createHealthCommand({
+  name: "engram",
+  getHealthUrl: () => {
+    const config = getConfig();
+    const { port, host } = config.http;
+    return `http://${host}:${port}/health`;
+  },
+});
 
 // --- Main ---
 
@@ -603,10 +527,7 @@ runCli({
   help: HELP,
   commands: {
     serve: () => cmdServe(),
-    start: () => cmdStart(),
-    stop: () => cmdStop(),
-    status: cmdStatus,
-    restart: () => cmdRestart(),
+    ...daemonCmds,
     health: cmdHealth,
     config: cmdConfig,
     logs: createLogsCommand({
