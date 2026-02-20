@@ -1,3 +1,4 @@
+import { createLogger } from "@shetty4l/core/log";
 import { getConfig } from "../config";
 import {
   getAllMemoriesWithEmbeddings,
@@ -8,6 +9,8 @@ import {
 } from "../db";
 import { calculateDecayedStrength } from "../db/decay";
 import { bufferToEmbedding, cosineSimilarity, embed } from "../embedding";
+
+const log = createLogger("engram");
 
 export interface RecallInput {
   query: string;
@@ -72,8 +75,8 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
 
   // If embedding fails, fall back to FTS5 search
   if (!queryEmbeddingResult.ok) {
-    console.error(
-      `engram: warning: query embedding failed, falling back to FTS5 — ${queryEmbeddingResult.error}`,
+    log(
+      `warning: query embedding failed, falling back to FTS5 — ${queryEmbeddingResult.error}`,
     );
     return recallFTS5(input, limit, minStrength, filters);
   }

@@ -1,9 +1,12 @@
 import { Database } from "bun:sqlite";
 import { createDatabaseManager } from "@shetty4l/core/db";
+import { createLogger } from "@shetty4l/core/log";
 import { err, ok, type Result } from "@shetty4l/core/result";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { getConfig } from "../config";
+
+const log = createLogger("engram");
 
 export interface Memory {
   id: string;
@@ -192,7 +195,9 @@ const manager = createDatabaseManager({
 
 export function initDatabase(dbPath?: string): Database {
   const config = getConfig();
-  return manager.init(dbPath ?? config.database.path);
+  const resolvedPath = dbPath ?? config.database.path;
+  log(`database: ${resolvedPath}`);
+  return manager.init(resolvedPath);
 }
 
 export const getDatabase = manager.db;
@@ -426,8 +431,8 @@ export function searchMemories(
     return stmt.all(params) as SearchResult[];
   } catch (e) {
     // FTS5 parse error — fall back to strength-ordered results
-    console.error(
-      `engram: warning: FTS5 search failed, falling back to strength-ordered results — ${e instanceof Error ? e.message : String(e)}`,
+    log(
+      `warning: FTS5 search failed, falling back to strength-ordered results — ${e instanceof Error ? e.message : String(e)}`,
     );
     return getAllMemories(limit, filters).map((m) => ({ ...m, rank: 0 }));
   }
