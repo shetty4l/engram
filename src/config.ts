@@ -1,5 +1,5 @@
+import { expandPath, getDataDir } from "@shetty4l/core/config";
 import { createLogger } from "@shetty4l/core/log";
-import { homedir } from "os";
 import { join } from "path";
 
 const log = createLogger("engram");
@@ -32,21 +32,6 @@ export interface Config {
     contextHydration: boolean;
     workItems: boolean;
   };
-}
-
-function expandPath(path: string): string {
-  if (path.startsWith("~")) {
-    return join(homedir(), path.slice(1));
-  }
-  return path;
-}
-
-function getDataDir(): string {
-  const xdgData = process.env.XDG_DATA_HOME;
-  if (xdgData) {
-    return join(xdgData, "engram");
-  }
-  return join(homedir(), ".local", "share", "engram");
 }
 
 /**
@@ -90,7 +75,7 @@ function parsePortEnv(
 }
 
 export function getConfig(): Config {
-  const dataDir = getDataDir();
+  const dataDir = getDataDir("engram");
 
   return {
     database: {
