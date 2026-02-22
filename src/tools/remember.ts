@@ -34,6 +34,7 @@ export interface RememberOutput {
 export async function remember(
   input: RememberInput,
 ): Promise<Result<RememberOutput>> {
+  const startTime = performance.now();
   const config = getConfig();
   const scopeIdForIdempotency = config.features.scopes
     ? input.scope_id
@@ -74,6 +75,7 @@ export async function remember(
         session_id: input.session_id,
         event: "upsert",
         memory_id: existing.id,
+        latency_ms: performance.now() - startTime,
       });
 
       const output: RememberOutput = { id: existing.id, status: "updated" };
@@ -141,6 +143,7 @@ export async function remember(
     session_id: input.session_id,
     event: "remember",
     memory_id: id,
+    latency_ms: performance.now() - startTime,
   });
 
   const output: RememberOutput = { id, status: "created" };
