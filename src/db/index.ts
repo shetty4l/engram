@@ -791,3 +791,119 @@ export function getMemoriesBelowStrength(threshold: number): Memory[] {
   `);
   return stmt.all({ $threshold: threshold }) as Memory[];
 }
+
+// Stats API functions
+
+export interface ApiStats {
+  memories: {
+    total: number;
+    with_embedding_pct: number;
+  };
+  operations: {
+    recall_1h: number;
+    remember_1h: number;
+    recall_hit_rate_1h: number;
+    recall_fallback_rate_1h: number;
+  };
+  latency: {
+    recall_p50_ms: number | null;
+    recall_p95_ms: number | null;
+    recall_p99_ms: number | null;
+  };
+}
+
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = Math.ceil((p / 100) * sorted.length) - 1;
+  return sorted[Math.max(0, idx)];
+}
+
+export function getStatsForApi(): ApiStats {
+  const database = getDatabase();
+
+  // Memory counts
+  const totalMemories = (
+    database.prepare("SELECT COUNT(*) as count FROM memories").get() as {
+      count: number;
+    }
+  ).count;
+
+  const withEmbedding = (
+    database
+      .prepare(
+        "SELECT COUNT(*) as count FROM memories WHERE embedding IS NOT NULL",
+      )
+      .get() as { count: number }
+  ).count;
+
+  const withEmbeddingPct =
+    totalMemories > 0
+      ? Math.round((withEmbedding / totalMemories) * 1000) / 10
+      : 0;
+
+  // Operations in last hour
+  const recallCount = (
+    database
+      .prepare(
+        "SELECT COUNT(*) as count FROM metrics WHERE event = 'recall' AND timestamp > datetime('now', '-1 hour')",
+      )
+      .get() as { count: number }
+  ).count;
+
+  const rememberCount = (
+    database
+      .prepare(
+        "SELECT COUNT(*) as count FROM metrics WHERE event IN ('remember', 'upsert') AND timestamp > datetime('now', '-1 hour')",
+      )
+      .get() as { count: number }
+  ).count;
+
+  const recallHits = (
+    database
+      .prepare(
+        "SELECT COUNT(*) as count FROM metrics WHERE event = 'recall' AND result_count > 0 AND timestamp > datetime('now', '-1 hour')",
+      )
+      .get() as { count: number }
+  ).count;
+
+  const recallFallbacks = (
+    database
+      .prepare(
+        "SELECT COUNT(*) as count FROM metrics WHERE event = 'recall' AND was_fallback = 1 AND timestamp > datetime('now', '-1 hour')",
+      )
+      .get() as { count: number }
+  ).count;
+
+  const recallHitRate = recallCount > 0 ? recallHits / recallCount : 0;
+  const recallFallbackRate =
+    recallCount > 0 ? recallFallbacks / recallCount : 0;
+
+  // Latency percentiles for recall in last hour
+  const latencyRows = database
+    .prepare(
+      "SELECT latency_ms FROM metrics WHERE event = 'recall' AND latency_ms IS NOT NULL AND timestamp > datetime('now', '-1 hour') ORDER BY latency_ms",
+    )
+    .all() as { latency_ms: number }[];
+
+  const latencyValues = latencyRows.map((r) => r.latency_ms);
+
+  const hasLatencyData = latencyValues.length > 0;
+
+  return {
+    memories: {
+      total: totalMemories,
+      with_embedding_pct: withEmbeddingPct,
+    },
+    operations: {
+      recall_1h: recallCount,
+      remember_1h: rememberCount,
+      recall_hit_rate_1h: recallHitRate,
+      recall_fallback_rate_1h: recallFallbackRate,
+    },
+    latency: {
+      recall_p50_ms: hasLatencyData ? percentile(latencyValues, 50) : null,
+      recall_p95_ms: hasLatencyData ? percentile(latencyValues, 95) : null,
+      recall_p99_ms: hasLatencyData ? percentile(latencyValues, 99) : null,
+    },
+  };
+}

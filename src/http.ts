@@ -19,7 +19,7 @@ import {
 import { createLogger } from "@shetty4l/core/log";
 import { getCapabilities } from "./capabilities";
 import { getConfig, logFeatureFlags } from "./config";
-import { initDatabase } from "./db";
+import { getStatsForApi, initDatabase } from "./db";
 import {
   type ContextHydrateInput,
   contextHydrate,
@@ -77,6 +77,10 @@ async function routeRequest(req: Request, url: URL): Promise<Response | null> {
 
   if (path === "/capabilities" && method === "GET") {
     return jsonOk(getCapabilities(VERSION));
+  }
+
+  if (path === "/stats" && method === "GET") {
+    return jsonOk(getStatsForApi());
   }
 
   // Remember endpoint
