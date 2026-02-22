@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS metrics (
     memory_id TEXT,               -- for remember events
     query TEXT,                   -- for recall events
     result_count INTEGER,         -- for recall events
-    was_fallback INTEGER          -- for recall events (1 if empty query)
+    was_fallback INTEGER,         -- for recall events (1 if empty query)
+    latency_ms REAL               -- operation latency in milliseconds
 );
 
 -- Index for querying metrics by session

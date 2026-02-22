@@ -44,6 +44,7 @@ export interface RecallOutput {
  * Falls back to FTS5 if no embeddings available.
  */
 export async function recall(input: RecallInput): Promise<RecallOutput> {
+  const startTime = performance.now();
   const config = getConfig();
   const limit = input.limit ?? config.memory.defaultRecallLimit;
   const minStrength = input.min_strength ?? config.memory.minStrength;
@@ -59,7 +60,7 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
   // Empty query falls back to recent memories
   const isFallback = !input.query.trim();
   if (isFallback) {
-    return recallFallback(input, limit, minStrength, filters);
+    return recallFallback(input, limit, minStrength, filters, startTime);
   }
 
   // Try semantic search first
@@ -67,7 +68,7 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
 
   if (memoriesWithEmbeddings.length === 0) {
     // No embeddings available, fall back to FTS5
-    return recallFTS5(input, limit, minStrength, filters);
+    return recallFTS5(input, limit, minStrength, filters, startTime);
   }
 
   // Generate query embedding
@@ -78,7 +79,7 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
     log(
       `warning: query embedding failed, falling back to FTS5 — ${queryEmbeddingResult.error}`,
     );
-    return recallFTS5(input, limit, minStrength, filters);
+    return recallFTS5(input, limit, minStrength, filters, startTime);
   }
 
   const queryEmbedding = queryEmbeddingResult.value;
@@ -124,6 +125,7 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
     query: input.query,
     result_count: scoredMemories.length,
     was_fallback: false,
+    latency_ms: performance.now() - startTime,
   });
 
   return {
@@ -140,6 +142,7 @@ function recallFTS5(
   limit: number,
   minStrength: number,
   filters: MemoryFilters,
+  startTime: number,
 ): RecallOutput {
   let results = searchMemories(input.query, limit * 2, filters);
 
@@ -188,6 +191,7 @@ function recallFTS5(
     query: input.query,
     result_count: memories.length,
     was_fallback: false,
+    latency_ms: performance.now() - startTime,
   });
 
   return {
@@ -204,6 +208,7 @@ function recallFallback(
   limit: number,
   minStrength: number,
   filters: MemoryFilters,
+  startTime: number,
 ): RecallOutput {
   let results = searchMemories("", limit * 2, filters);
 
@@ -250,6 +255,7 @@ function recallFallback(
     query: input.query,
     result_count: memories.length,
     was_fallback: true,
+    latency_ms: performance.now() - startTime,
   });
 
   return {

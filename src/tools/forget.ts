@@ -16,6 +16,7 @@ export interface ForgetOutput {
 export async function forget(
   input: ForgetInput,
 ): Promise<Result<ForgetOutput>> {
+  const startTime = performance.now();
   const config = getConfig();
 
   let scope: DeleteScope;
@@ -33,6 +34,7 @@ export async function forget(
     session_id: input.session_id,
     event: "forget",
     memory_id: input.id,
+    latency_ms: performance.now() - startTime,
   });
 
   return ok({

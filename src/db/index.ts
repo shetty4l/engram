@@ -179,6 +179,11 @@ function runMigrations(database: Database): void {
     CREATE INDEX IF NOT EXISTS idx_work_events_work_item_id ON work_events(work_item_id);
   `);
 
+  // Add latency_ms column to metrics table (Wave 3: stats API)
+  if (!hasColumn(database, "metrics", "latency_ms")) {
+    database.exec("ALTER TABLE metrics ADD COLUMN latency_ms REAL");
+  }
+
   migrateIdempotencyLedger(database);
 
   database.exec(`
@@ -447,13 +452,14 @@ export interface MetricEvent {
   query?: string;
   result_count?: number;
   was_fallback?: boolean;
+  latency_ms?: number;
 }
 
 export function logMetric(metric: MetricEvent): void {
   const database = getDatabase();
   const stmt = database.prepare(`
-    INSERT INTO metrics (session_id, event, memory_id, query, result_count, was_fallback)
-    VALUES ($session_id, $event, $memory_id, $query, $result_count, $was_fallback)
+    INSERT INTO metrics (session_id, event, memory_id, query, result_count, was_fallback, latency_ms)
+    VALUES ($session_id, $event, $memory_id, $query, $result_count, $was_fallback, $latency_ms)
   `);
 
   stmt.run({
@@ -463,6 +469,7 @@ export function logMetric(metric: MetricEvent): void {
     $query: metric.query ?? null,
     $result_count: metric.result_count ?? null,
     $was_fallback: metric.was_fallback ? 1 : null,
+    $latency_ms: metric.latency_ms ?? null,
   });
 }
 
