@@ -806,10 +806,10 @@ export interface ApiStats {
     with_embedding_pct: number;
   };
   operations: {
-    recall_1h: number;
-    remember_1h: number;
-    recall_hit_rate_1h: number;
-    recall_fallback_rate_1h: number;
+    recall_24h: number;
+    remember_24h: number;
+    recall_hit_rate_24h: number;
+    recall_fallback_rate_24h: number;
   };
   latency: {
     recall_p50_ms: number | null;
@@ -847,11 +847,11 @@ export function getStatsForApi(): ApiStats {
       ? Math.round((withEmbedding / totalMemories) * 1000) / 10
       : 0;
 
-  // Operations in last hour
+  // Operations in last 24 hours
   const recallCount = (
     database
       .prepare(
-        "SELECT COUNT(*) as count FROM metrics WHERE event = 'recall' AND timestamp > datetime('now', '-1 hour')",
+        "SELECT COUNT(*) as count FROM metrics WHERE event = 'recall' AND timestamp > datetime('now', '-24 hours')",
       )
       .get() as { count: number }
   ).count;
@@ -859,7 +859,7 @@ export function getStatsForApi(): ApiStats {
   const rememberCount = (
     database
       .prepare(
-        "SELECT COUNT(*) as count FROM metrics WHERE event IN ('remember', 'upsert') AND timestamp > datetime('now', '-1 hour')",
+        "SELECT COUNT(*) as count FROM metrics WHERE event IN ('remember', 'upsert') AND timestamp > datetime('now', '-24 hours')",
       )
       .get() as { count: number }
   ).count;
@@ -867,7 +867,7 @@ export function getStatsForApi(): ApiStats {
   const recallHits = (
     database
       .prepare(
-        "SELECT COUNT(*) as count FROM metrics WHERE event = 'recall' AND result_count > 0 AND timestamp > datetime('now', '-1 hour')",
+        "SELECT COUNT(*) as count FROM metrics WHERE event = 'recall' AND result_count > 0 AND timestamp > datetime('now', '-24 hours')",
       )
       .get() as { count: number }
   ).count;
@@ -875,7 +875,7 @@ export function getStatsForApi(): ApiStats {
   const recallFallbacks = (
     database
       .prepare(
-        "SELECT COUNT(*) as count FROM metrics WHERE event = 'recall' AND was_fallback = 1 AND timestamp > datetime('now', '-1 hour')",
+        "SELECT COUNT(*) as count FROM metrics WHERE event = 'recall' AND was_fallback = 1 AND timestamp > datetime('now', '-24 hours')",
       )
       .get() as { count: number }
   ).count;
@@ -884,10 +884,10 @@ export function getStatsForApi(): ApiStats {
   const recallFallbackRate =
     recallCount > 0 ? recallFallbacks / recallCount : 0;
 
-  // Latency percentiles for recall in last hour
+  // Latency percentiles for recall in last 24 hours
   const latencyRows = database
     .prepare(
-      "SELECT latency_ms FROM metrics WHERE event = 'recall' AND latency_ms IS NOT NULL AND timestamp > datetime('now', '-1 hour') ORDER BY latency_ms",
+      "SELECT latency_ms FROM metrics WHERE event = 'recall' AND latency_ms IS NOT NULL AND timestamp > datetime('now', '-24 hours') ORDER BY latency_ms",
     )
     .all() as { latency_ms: number }[];
 
@@ -901,10 +901,10 @@ export function getStatsForApi(): ApiStats {
       with_embedding_pct: withEmbeddingPct,
     },
     operations: {
-      recall_1h: recallCount,
-      remember_1h: rememberCount,
-      recall_hit_rate_1h: recallHitRate,
-      recall_fallback_rate_1h: recallFallbackRate,
+      recall_24h: recallCount,
+      remember_24h: rememberCount,
+      recall_hit_rate_24h: recallHitRate,
+      recall_fallback_rate_24h: recallFallbackRate,
     },
     latency: {
       recall_p50_ms: hasLatencyData ? percentile(latencyValues, 50) : null,

@@ -26,10 +26,10 @@ describe("stats API", () => {
 
       expect(stats.memories.total).toBe(0);
       expect(stats.memories.with_embedding_pct).toBe(0);
-      expect(stats.operations.recall_1h).toBe(0);
-      expect(stats.operations.remember_1h).toBe(0);
-      expect(stats.operations.recall_hit_rate_1h).toBe(0);
-      expect(stats.operations.recall_fallback_rate_1h).toBe(0);
+      expect(stats.operations.recall_24h).toBe(0);
+      expect(stats.operations.remember_24h).toBe(0);
+      expect(stats.operations.recall_hit_rate_24h).toBe(0);
+      expect(stats.operations.recall_fallback_rate_24h).toBe(0);
       expect(stats.latency.recall_p50_ms).toBeNull();
       expect(stats.latency.recall_p95_ms).toBeNull();
       expect(stats.latency.recall_p99_ms).toBeNull();
@@ -66,7 +66,7 @@ describe("stats API", () => {
       logMetric({ event: "recall", query: "other", result_count: 0 });
 
       const stats = getStatsForApi();
-      expect(stats.operations.recall_1h).toBe(2);
+      expect(stats.operations.recall_24h).toBe(2);
     });
 
     test("counts remember and upsert operations in last hour", () => {
@@ -75,7 +75,7 @@ describe("stats API", () => {
       logMetric({ event: "remember", memory_id: "m3" });
 
       const stats = getStatsForApi();
-      expect(stats.operations.remember_1h).toBe(3);
+      expect(stats.operations.remember_24h).toBe(3);
     });
 
     test("computes recall hit rate", () => {
@@ -85,7 +85,7 @@ describe("stats API", () => {
       logMetric({ event: "recall", query: "d", result_count: 0 });
 
       const stats = getStatsForApi();
-      expect(stats.operations.recall_hit_rate_1h).toBe(0.5);
+      expect(stats.operations.recall_hit_rate_24h).toBe(0.5);
     });
 
     test("computes recall fallback rate", () => {
@@ -105,7 +105,7 @@ describe("stats API", () => {
       });
 
       const stats = getStatsForApi();
-      expect(stats.operations.recall_fallback_rate_1h).toBe(0.5);
+      expect(stats.operations.recall_fallback_rate_24h).toBe(0.5);
     });
 
     test("computes latency percentiles", () => {
@@ -149,34 +149,34 @@ describe("stats API", () => {
       expect(stats.latency.recall_p99_ms).toBe(42);
     });
 
-    test("excludes metrics older than 1 hour", () => {
+    test("excludes metrics older than 24 hours", () => {
       // Insert a metric with a recent timestamp (now)
       logMetric({ event: "recall", query: "recent", result_count: 1 });
 
-      // Insert a metric with an old timestamp (2 hours ago)
+      // Insert a metric with an old timestamp (2 days ago)
       const db = getDatabase();
       db.prepare(
         `INSERT INTO metrics (timestamp, event, query, result_count, latency_ms)
-         VALUES (datetime('now', '-2 hours'), 'recall', 'old', 3, 50)`,
+         VALUES (datetime('now', '-2 days'), 'recall', 'old', 3, 50)`,
       ).run();
 
       const stats = getStatsForApi();
-      expect(stats.operations.recall_1h).toBe(1);
+      expect(stats.operations.recall_24h).toBe(1);
       // Old latency data should also be excluded
       expect(stats.latency.recall_p50_ms).toBeNull();
     });
 
-    test("excludes old remember metrics from 1h window", () => {
+    test("excludes old remember metrics from 24h window", () => {
       logMetric({ event: "remember", memory_id: "recent" });
 
       const db = getDatabase();
       db.prepare(
         `INSERT INTO metrics (timestamp, event, memory_id)
-         VALUES (datetime('now', '-2 hours'), 'remember', 'old')`,
+         VALUES (datetime('now', '-2 days'), 'remember', 'old')`,
       ).run();
 
       const stats = getStatsForApi();
-      expect(stats.operations.remember_1h).toBe(1);
+      expect(stats.operations.remember_24h).toBe(1);
     });
   });
 
@@ -232,10 +232,10 @@ describe("stats API", () => {
 
         expect(body.memories.total).toBe(0);
         expect(body.memories.with_embedding_pct).toBe(0);
-        expect(body.operations.recall_1h).toBe(0);
-        expect(body.operations.remember_1h).toBe(0);
-        expect(body.operations.recall_hit_rate_1h).toBe(0);
-        expect(body.operations.recall_fallback_rate_1h).toBe(0);
+        expect(body.operations.recall_24h).toBe(0);
+        expect(body.operations.remember_24h).toBe(0);
+        expect(body.operations.recall_hit_rate_24h).toBe(0);
+        expect(body.operations.recall_fallback_rate_24h).toBe(0);
         expect(body.latency.recall_p50_ms).toBeNull();
         expect(body.latency.recall_p95_ms).toBeNull();
         expect(body.latency.recall_p99_ms).toBeNull();
@@ -265,9 +265,9 @@ describe("stats API", () => {
         >;
 
         expect(body.memories.total).toBe(1);
-        expect(body.operations.recall_1h).toBe(1);
-        expect(body.operations.remember_1h).toBe(1);
-        expect(body.operations.recall_hit_rate_1h).toBe(1);
+        expect(body.operations.recall_24h).toBe(1);
+        expect(body.operations.remember_24h).toBe(1);
+        expect(body.operations.recall_hit_rate_24h).toBe(1);
         expect(body.latency.recall_p50_ms).toBe(25);
       } finally {
         server.stop();
