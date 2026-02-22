@@ -184,6 +184,12 @@ function runMigrations(database: Database): void {
     database.exec("ALTER TABLE metrics ADD COLUMN latency_ms REAL");
   }
 
+  // Index for stats API time-windowed queries on metrics table
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_metrics_event_timestamp
+      ON metrics(event, timestamp);
+  `);
+
   migrateIdempotencyLedger(database);
 
   database.exec(`
