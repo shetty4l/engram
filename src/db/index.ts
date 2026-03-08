@@ -312,7 +312,7 @@ function applyMemoryFilters(
   params: Record<string, string | number>,
 ): void {
   if (filters.scope_id) {
-    clauses.push("scope_id = $scope_id");
+    clauses.push("(scope_id = $scope_id OR scope_id IS NULL)");
     params.$scope_id = filters.scope_id;
   }
   if (filters.chat_id) {
