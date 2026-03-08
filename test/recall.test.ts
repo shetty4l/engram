@@ -152,6 +152,21 @@ describe("recall tool", () => {
     expect(result.memories[0].content).toBe("Project A memory");
   });
 
+  test("scoped recall includes unscoped (NULL scope_id) memories", async () => {
+    process.env.ENGRAM_ENABLE_SCOPES = "1";
+
+    await remember({ content: "Legacy unscoped memory" });
+    await remember({ content: "Scoped memory for agent", scope_id: "takumi" });
+    await remember({ content: "Other agent memory", scope_id: "wilson" });
+
+    const result = await recall({ query: "memory", scope_id: "takumi" });
+
+    const contents = result.memories.map((m) => m.content);
+    expect(contents).toContain("Legacy unscoped memory");
+    expect(contents).toContain("Scoped memory for agent");
+    expect(contents).not.toContain("Other agent memory");
+  });
+
   // Semantic search behavior tests
   describe("semantic search", () => {
     test("finds memories with semantically similar content", async () => {
