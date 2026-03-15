@@ -913,3 +913,79 @@ export function getStatsForApi(): ApiStats {
     },
   };
 }
+
+// Sync/export-import functions
+
+/**
+ * Iterate over all memories in the database.
+ * Wraps stmt.all() as a generator for interface consistency
+ * and to allow future cursor-based streaming.
+ */
+export function* getAllMemoriesIterator(): Generator<Memory> {
+  const database = getDatabase();
+  const rows = database
+    .prepare("SELECT * FROM memories ORDER BY created_at ASC")
+    .all() as Memory[];
+  for (const row of rows) {
+    yield row;
+  }
+}
+
+export interface InsertMemoryRawInput {
+  id: string;
+  content: string;
+  category: string | null;
+  scope_id: string | null;
+  chat_id: string | null;
+  thread_id: string | null;
+  task_id: string | null;
+  metadata_json: string | null;
+  idempotency_key: string | null;
+  created_at: string;
+  updated_at: string;
+  last_accessed: string;
+  access_count: number;
+  strength: number;
+  embedding: Buffer | null;
+}
+
+/**
+ * Insert a memory preserving all original fields (id, timestamps, strength, access_count).
+ * Uses INSERT OR REPLACE to handle both new inserts and conflict resolution.
+ * Unlike createMemory(), this does not auto-generate id or timestamps.
+ * FTS triggers fire automatically on INSERT/REPLACE.
+ */
+export function insertMemoryRaw(input: InsertMemoryRawInput): Memory {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    INSERT OR REPLACE INTO memories (
+      id, content, category, scope_id, chat_id, thread_id, task_id,
+      metadata_json, idempotency_key, created_at, updated_at,
+      last_accessed, access_count, strength, embedding
+    )
+    VALUES (
+      $id, $content, $category, $scope_id, $chat_id, $thread_id, $task_id,
+      $metadata_json, $idempotency_key, $created_at, $updated_at,
+      $last_accessed, $access_count, $strength, $embedding
+    )
+    RETURNING *
+  `);
+
+  return stmt.get({
+    $id: input.id,
+    $content: input.content,
+    $category: input.category,
+    $scope_id: input.scope_id,
+    $chat_id: input.chat_id,
+    $thread_id: input.thread_id,
+    $task_id: input.task_id,
+    $metadata_json: input.metadata_json,
+    $idempotency_key: input.idempotency_key,
+    $created_at: input.created_at,
+    $updated_at: input.updated_at,
+    $last_accessed: input.last_accessed,
+    $access_count: input.access_count,
+    $strength: input.strength,
+    $embedding: input.embedding,
+  }) as Memory;
+}
