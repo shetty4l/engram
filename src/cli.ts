@@ -14,6 +14,7 @@
  *   engram prune [opts]    Delete weak memories (--threshold=0.1 --dry-run)
  *   engram export [opts]   Export memories as NDJSON (--output=<file> --no-embeddings)
  *   engram import <file|-> Import memories from NDJSON (--dry-run --reembed --similarity=0.92)
+ *   engram sync <url>      Bidirectional sync with remote instance (--dry-run --similarity=0.92)
  *
  *   engram serve           Start HTTP server (foreground)
  *   engram start           Start HTTP server as daemon
@@ -57,7 +58,11 @@ import {
 } from "./db";
 import { calculateDecayedStrength, daysSince } from "./db/decay";
 import { startHttpServer } from "./http";
-import { exportMemoriesNDJSON, importMemories } from "./sync";
+import {
+  exportMemoriesNDJSON,
+  type ImportResult,
+  importMemories,
+} from "./sync";
 import { VERSION } from "./version";
 
 const CONFIG_DIR = getConfigDir("engram");
@@ -77,6 +82,7 @@ Usage:
   engram prune [opts]    Delete weak memories (--threshold=0.1 --dry-run)
   engram export [opts]   Export memories as NDJSON (--output=<file> --no-embeddings)
   engram import <file|-> Import memories from NDJSON (--dry-run --reembed --similarity=0.92)
+  engram sync <url>      Bidirectional sync with remote (--dry-run --similarity=0.92)
 
   engram serve           Start HTTP server (foreground)
   engram start           Start HTTP server as daemon
@@ -568,6 +574,126 @@ async function cmdImport(args: string[], json: boolean): Promise<number> {
   return 0;
 }
 
+async function cmdSync(args: string[], json: boolean): Promise<number> {
+  const positionalArgs = args.filter((a) => !a.startsWith("--"));
+  const url = positionalArgs[0];
+
+  if (!url) {
+    console.error("Error: remote URL required");
+    console.error("Usage: engram sync <url> [--dry-run] [--similarity=0.92]");
+    return 1;
+  }
+
+  const dryRun = args.includes("--dry-run");
+  const similarityArg = args.find((a) => a.startsWith("--similarity="));
+  const similarityThreshold = similarityArg
+    ? Number.parseFloat(similarityArg.split("=")[1])
+    : 0.92;
+
+  if (
+    Number.isNaN(similarityThreshold) ||
+    similarityThreshold < 0 ||
+    similarityThreshold > 1
+  ) {
+    console.error("Error: similarity must be a number between 0 and 1");
+    return 1;
+  }
+
+  const baseUrl = url.replace(/\/+$/, "");
+
+  // 1. Pull: Fetch remote export → import locally
+  const exportUrl = `${baseUrl}/export`;
+  let pullResult: ImportResult;
+
+  try {
+    const res = await fetch(exportUrl);
+    if (!res.ok) {
+      console.error(
+        `Error: GET ${exportUrl} returned ${res.status} ${res.statusText}`,
+      );
+      return 1;
+    }
+    const body = await res.text();
+    const lines = body.split("\n").filter((l) => l.trim());
+    pullResult = await importMemories(lines, {
+      dryRun,
+      reembed: false,
+      similarityThreshold,
+    });
+  } catch (e) {
+    console.error(
+      `Error: failed to fetch from ${exportUrl} — ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return 1;
+  }
+
+  // 2. Push: Stream local export → remote import
+  const importParams = new URLSearchParams();
+  if (dryRun) importParams.set("dry_run", "1");
+  importParams.set("similarity", String(similarityThreshold));
+  const importUrl = `${baseUrl}/import?${importParams.toString()}`;
+
+  let pushResult: ImportResult;
+  try {
+    const ndjsonLines: string[] = [];
+    for (const line of exportMemoriesNDJSON({ includeEmbeddings: true })) {
+      ndjsonLines.push(line);
+    }
+    const body = `${ndjsonLines.join("\n")}\n`;
+
+    const res = await fetch(importUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-ndjson" },
+      body,
+    });
+    if (!res.ok) {
+      console.error(
+        `Error: POST ${importUrl} returned ${res.status} ${res.statusText}`,
+      );
+      return 1;
+    }
+    pushResult = (await res.json()) as ImportResult;
+  } catch (e) {
+    console.error(
+      `Error: failed to push to ${importUrl} — ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return 1;
+  }
+
+  // 3. Report combined results
+  if (json) {
+    console.log(
+      JSON.stringify(
+        {
+          dry_run: dryRun,
+          pull: pullResult,
+          push: pushResult,
+        },
+        null,
+        2,
+      ),
+    );
+    return 0;
+  }
+
+  const label = dryRun ? "=== Sync Dry Run ===" : "=== Sync Complete ===";
+  console.log(label);
+  console.log("  Pull (remote → local):");
+  console.log(`    Inserted:          ${pullResult.inserted}`);
+  console.log(`    Skipped duplicate: ${pullResult.skippedDuplicate}`);
+  console.log(
+    `    Conflicts:         local wins: ${pullResult.resolved.localWins}, remote wins: ${pullResult.resolved.remoteWins}`,
+  );
+  console.log("  Push (local → remote):");
+  console.log(`    Inserted:          ${pushResult.inserted}`);
+  console.log(`    Skipped duplicate: ${pushResult.skippedDuplicate}`);
+  console.log(
+    `    Conflicts:         local wins: ${pushResult.resolved.localWins}, remote wins: ${pushResult.resolved.remoteWins}`,
+  );
+
+  return 0;
+}
+
 function cmdConfig(_args: string[], json: boolean): void {
   const result = loadConfig();
   if (!result.ok) {
@@ -649,5 +775,6 @@ runCli({
     prune: withDb(cmdPrune),
     export: withDb(cmdExport),
     import: withDb(cmdImport),
+    sync: withDb(cmdSync),
   },
 });
