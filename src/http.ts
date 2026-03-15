@@ -8,9 +8,12 @@
  * - POST /context/hydrate - Hydrate assistant context (feature-flagged)
  * - GET /capabilities - Feature discovery
  * - GET /health - Health check (handled by core)
+ * - POST|DELETE /mcp - Streamable HTTP MCP transport (stateless)
  */
 
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
+  corsHeaders,
   createServer,
   type HttpServer,
   jsonError,
@@ -20,6 +23,7 @@ import { createLogger } from "@shetty4l/core/log";
 import { getCapabilities } from "./capabilities";
 import { getConfig, logFeatureFlags } from "./config";
 import { getStatsForApi, initDatabase } from "./db";
+import { createMcpServer } from "./mcp-server";
 import {
   type ContextHydrateInput,
   contextHydrate,
@@ -143,6 +147,38 @@ async function routeRequest(req: Request, url: URL): Promise<Response | null> {
 
     const result = await contextHydrate(bodyOrError);
     return jsonOk(result);
+  }
+
+  // Streamable HTTP MCP endpoint (stateless, per-request server)
+  if (path === "/mcp") {
+    if (method === "GET") {
+      // SSE endpoint not supported in stateless mode
+      return jsonError(405, "Method not allowed (stateless MCP — no SSE)");
+    }
+
+    if (method === "POST" || method === "DELETE") {
+      const mcpServer = createMcpServer();
+      const transport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+        enableJsonResponse: true,
+      });
+      await mcpServer.connect(transport);
+
+      const mcpResponse = await transport.handleRequest(req);
+
+      // Inject CORS headers — MCP responses bypass core's jsonOk/jsonError
+      const headers = new Headers(mcpResponse.headers);
+      for (const [key, value] of Object.entries(corsHeaders())) {
+        headers.set(key, value);
+      }
+      headers.set("Access-Control-Expose-Headers", "mcp-session-id");
+
+      return new Response(mcpResponse.body, {
+        status: mcpResponse.status,
+        statusText: mcpResponse.statusText,
+        headers,
+      });
+    }
   }
 
   // Not found — return null so core's createServer generates the 404
