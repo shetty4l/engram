@@ -104,4 +104,120 @@ describe("http server", () => {
       server.stop();
     }
   });
+
+  /** MCP requests require Accept header with both JSON and SSE content types. */
+  const mcpHeaders = {
+    "Content-Type": "application/json",
+    Accept: "application/json, text/event-stream",
+  };
+
+  test("POST /mcp with initialize returns valid MCP JSON-RPC response", async () => {
+    const server = startHttpServer();
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: mcpHeaders,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "test", version: "1.0" },
+          },
+        }),
+      });
+
+      expect(response.status).toBe(200);
+
+      const body = (await response.json()) as {
+        jsonrpc: string;
+        id: number;
+        result: {
+          protocolVersion: string;
+          capabilities: { tools: Record<string, unknown> };
+          serverInfo: { name: string; version: string };
+        };
+      };
+
+      expect(body.jsonrpc).toBe("2.0");
+      expect(body.id).toBe(1);
+      expect(body.result.serverInfo.name).toBe("engram");
+      expect(body.result.capabilities.tools).toBeDefined();
+
+      // CORS headers injected
+      expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+      expect(response.headers.get("Access-Control-Expose-Headers")).toBe(
+        "mcp-session-id",
+      );
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("GET /mcp returns 405 in stateless mode", async () => {
+    const server = startHttpServer();
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/mcp`);
+
+      expect(response.status).toBe(405);
+      const body = (await response.json()) as { error: string };
+      expect(body.error).toContain("Method not allowed");
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("POST /mcp tools/list returns engram tools", async () => {
+    const server = startHttpServer();
+
+    try {
+      // First initialize
+      await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: mcpHeaders,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "test", version: "1.0" },
+          },
+        }),
+      });
+
+      // Then list tools (stateless — each request is independent)
+      const response = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: mcpHeaders,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/list",
+          params: {},
+        }),
+      });
+
+      expect(response.status).toBe(200);
+
+      const body = (await response.json()) as {
+        jsonrpc: string;
+        id: number;
+        result: { tools: Array<{ name: string }> };
+      };
+
+      const toolNames = body.result.tools.map((t) => t.name);
+      expect(toolNames).toContain("remember");
+      expect(toolNames).toContain("recall");
+      expect(toolNames).toContain("forget");
+      expect(toolNames).toContain("capabilities");
+    } finally {
+      server.stop();
+    }
+  });
 });
