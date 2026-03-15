@@ -6,6 +6,8 @@
  * - POST /recall - Retrieve memories
  * - POST /forget - Delete a memory by ID
  * - POST /context/hydrate - Hydrate assistant context (feature-flagged)
+ * - GET /export - Stream all memories as NDJSON
+ * - POST /import - Import memories from NDJSON body
  * - GET /capabilities - Feature discovery
  * - GET /health - Health check (handled by core)
  * - POST|DELETE /mcp - Streamable HTTP MCP transport (stateless)
@@ -24,6 +26,11 @@ import { getCapabilities } from "./capabilities";
 import { getConfig, logFeatureFlags } from "./config";
 import { getStatsForApi, initDatabase } from "./db";
 import { createMcpServer } from "./mcp-server";
+import {
+  exportMemoriesNDJSON,
+  type ImportResult,
+  importMemories,
+} from "./sync";
 import {
   type ContextHydrateInput,
   contextHydrate,
@@ -147,6 +154,60 @@ async function routeRequest(req: Request, url: URL): Promise<Response | null> {
 
     const result = await contextHydrate(bodyOrError);
     return jsonOk(result);
+  }
+
+  // Export endpoint — streams NDJSON
+  if (path === "/export" && method === "GET") {
+    const noEmbeddings = url.searchParams.get("no_embeddings") === "1";
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const line of exportMemoriesNDJSON({
+          includeEmbeddings: !noEmbeddings,
+        })) {
+          controller.enqueue(encoder.encode(`${line}\n`));
+        }
+        controller.close();
+      },
+    });
+    return new Response(stream, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/x-ndjson",
+        ...corsHeaders(),
+      },
+    });
+  }
+
+  // Import endpoint — accepts streaming NDJSON body
+  if (path === "/import" && method === "POST") {
+    const dryRun = url.searchParams.get("dry_run") === "1";
+    const reembed = url.searchParams.get("reembed") === "1";
+    const similarityParam = url.searchParams.get("similarity");
+    const similarityThreshold = similarityParam
+      ? Number.parseFloat(similarityParam)
+      : 0.92;
+
+    if (
+      Number.isNaN(similarityThreshold) ||
+      similarityThreshold < 0 ||
+      similarityThreshold > 1
+    ) {
+      return jsonError(400, "similarity must be a number between 0 and 1");
+    }
+
+    // Buffers the full body rather than streaming — conscious tradeoff for
+    // simplicity at current scale. Revisit if import payloads grow large.
+    const body = await req.text();
+    const lines = body.split("\n").filter((l) => l.trim());
+
+    const result: ImportResult = await importMemories(lines, {
+      dryRun,
+      reembed,
+      similarityThreshold,
+    });
+
+    return jsonOk({ ...result, dry_run: dryRun });
   }
 
   // Streamable HTTP MCP endpoint (stateless, per-request server)
