@@ -12,6 +12,8 @@
  *   engram forget <id>     Delete a specific memory
  *   engram decay           Show decay status for all memories
  *   engram prune [opts]    Delete weak memories (--threshold=0.1 --dry-run)
+ *   engram export [opts]   Export memories as NDJSON (--output=<file> --no-embeddings)
+ *   engram import <file|-> Import memories from NDJSON (--dry-run --reembed --similarity=0.92)
  *
  *   engram serve           Start HTTP server (foreground)
  *   engram start           Start HTTP server as daemon
@@ -36,6 +38,7 @@ import {
 } from "@shetty4l/core/cli";
 import { getConfigDir } from "@shetty4l/core/config";
 import { onShutdown } from "@shetty4l/core/signals";
+import { readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { getConfig, loadConfig } from "./config";
 import { getDaemon } from "./daemon";
@@ -54,6 +57,7 @@ import {
 } from "./db";
 import { calculateDecayedStrength, daysSince } from "./db/decay";
 import { startHttpServer } from "./http";
+import { exportMemoriesNDJSON, importMemories } from "./sync";
 import { VERSION } from "./version";
 
 const CONFIG_DIR = getConfigDir("engram");
@@ -71,6 +75,8 @@ Usage:
   engram forget <id>     Delete a specific memory
   engram decay           Show decay status for all memories
   engram prune [opts]    Delete weak memories (--threshold=0.1 --dry-run)
+  engram export [opts]   Export memories as NDJSON (--output=<file> --no-embeddings)
+  engram import <file|-> Import memories from NDJSON (--dry-run --reembed --similarity=0.92)
 
   engram serve           Start HTTP server (foreground)
   engram start           Start HTTP server as daemon
@@ -463,6 +469,105 @@ function cmdPrune(args: string[], json: boolean): number {
   return 0;
 }
 
+function cmdExport(args: string[], _json: boolean): number {
+  const noEmbeddings = args.includes("--no-embeddings");
+  const outputArg = args.find((a) => a.startsWith("--output="));
+  const outputFile = outputArg ? outputArg.split("=")[1] : null;
+
+  let count = 0;
+  const lines: string[] = [];
+
+  for (const line of exportMemoriesNDJSON({
+    includeEmbeddings: !noEmbeddings,
+  })) {
+    if (outputFile) {
+      lines.push(line);
+    } else {
+      console.log(line);
+    }
+    count++;
+  }
+
+  if (outputFile) {
+    writeFileSync(outputFile, `${lines.join("\n")}\n`);
+  }
+
+  console.error(`exported ${count} memories`);
+  return 0;
+}
+
+async function cmdImport(args: string[], json: boolean): Promise<number> {
+  const positionalArgs = args.filter((a) => !a.startsWith("--"));
+  const filePath = positionalArgs[0];
+
+  if (!filePath) {
+    console.error("Error: file path or '-' for stdin required");
+    console.error(
+      "Usage: engram import <file|-> [--dry-run] [--reembed] [--similarity=0.92]",
+    );
+    return 1;
+  }
+
+  const dryRun = args.includes("--dry-run");
+  const reembed = args.includes("--reembed");
+  const similarityArg = args.find((a) => a.startsWith("--similarity="));
+  const similarityThreshold = similarityArg
+    ? Number.parseFloat(similarityArg.split("=")[1])
+    : 0.92;
+
+  if (
+    Number.isNaN(similarityThreshold) ||
+    similarityThreshold < 0 ||
+    similarityThreshold > 1
+  ) {
+    console.error("Error: similarity must be a number between 0 and 1");
+    return 1;
+  }
+
+  // Read input: file or stdin
+  let content: string;
+  if (filePath === "-") {
+    // Read from stdin (Bun.stdin is a ReadableStream, but we need sync for CLI)
+    const buf = readFileSync("/dev/stdin", "utf-8");
+    content = buf;
+  } else {
+    try {
+      content = readFileSync(filePath, "utf-8");
+    } catch (e) {
+      console.error(
+        `Error: cannot read file: ${filePath} — ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return 1;
+    }
+  }
+
+  const lines = content.split("\n").filter((l) => l.trim());
+
+  const result = await importMemories(lines, {
+    dryRun,
+    reembed,
+    similarityThreshold,
+  });
+
+  if (json) {
+    console.log(JSON.stringify({ ...result, dry_run: dryRun }, null, 2));
+    return 0;
+  }
+
+  if (dryRun) {
+    console.log("=== Import Dry Run ===");
+  } else {
+    console.log("=== Import Complete ===");
+  }
+  console.log(`  Inserted:          ${result.inserted}`);
+  console.log(`  Skipped duplicate: ${result.skippedDuplicate}`);
+  console.log(
+    `  Conflicts:         local wins: ${result.resolved.localWins}, remote wins: ${result.resolved.remoteWins}`,
+  );
+
+  return 0;
+}
+
 function cmdConfig(_args: string[], json: boolean): void {
   const result = loadConfig();
   if (!result.ok) {
@@ -542,5 +647,7 @@ runCli({
     forget: withDb(cmdForget),
     decay: withDb(cmdDecay),
     prune: withDb(cmdPrune),
+    export: withDb(cmdExport),
+    import: withDb(cmdImport),
   },
 });

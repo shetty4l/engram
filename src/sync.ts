@@ -11,7 +11,12 @@ import {
   getMemoryById,
   insertMemoryRaw,
 } from "./db";
-import { bufferToEmbedding, cosineSimilarity } from "./embedding";
+import {
+  bufferToEmbedding,
+  cosineSimilarity,
+  embed,
+  embeddingToBuffer,
+} from "./embedding";
 
 const log = createLogger("engram");
 
@@ -185,14 +190,14 @@ function isDuplicateByEmbedding(
  * - Unkeyed memories: dedup by embedding cosine similarity
  * - Exact ID matches: resolve by updated_at
  */
-export function importMemories(
+export async function importMemories(
   lines: Iterable<string>,
   opts: ImportOptions = {
     dryRun: false,
     reembed: false,
     similarityThreshold: 0.92,
   },
-): ImportResult {
+): Promise<ImportResult> {
   const result: ImportResult = {
     inserted: 0,
     skippedDuplicate: 0,
@@ -216,11 +221,20 @@ export function importMemories(
       continue;
     }
 
-    // Decode embedding if present and not re-embedding
-    const embeddingBuffer =
-      exported.embedding && !opts.reembed
-        ? decodeEmbedding(exported.embedding)
-        : null;
+    // Decode embedding if present and not re-embedding, or regenerate if reembed
+    let embeddingBuffer: Buffer | null = null;
+    if (opts.reembed) {
+      const embeddingResult = await embed(exported.content);
+      if (embeddingResult.ok) {
+        embeddingBuffer = embeddingToBuffer(embeddingResult.value);
+      } else {
+        log(
+          `warning: re-embedding failed for ${exported.id}, storing without vector — ${embeddingResult.error}`,
+        );
+      }
+    } else if (exported.embedding) {
+      embeddingBuffer = decodeEmbedding(exported.embedding);
+    }
 
     // 1. Check for exact ID match
     const existingById = getMemoryById(exported.id);
