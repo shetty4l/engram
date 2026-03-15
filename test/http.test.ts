@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { closeDatabase, initDatabase, resetDatabase } from "../src/db";
+import {
+  closeDatabase,
+  createMemory,
+  initDatabase,
+  resetDatabase,
+} from "../src/db";
 import { startHttpServer } from "../src/http";
+import type { ExportedMemory } from "../src/sync";
 
 describe("http server", () => {
   const originalPort = process.env.ENGRAM_HTTP_PORT;
@@ -166,6 +172,145 @@ describe("http server", () => {
       expect(response.status).toBe(405);
       const body = (await response.json()) as { error: string };
       expect(body.error).toContain("Method not allowed");
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("GET /export returns NDJSON with correct content-type", async () => {
+    // Seed some memories
+    createMemory({
+      id: "exp-1",
+      content: "Export test memory 1",
+      category: "fact",
+    });
+    createMemory({ id: "exp-2", content: "Export test memory 2" });
+
+    const server = startHttpServer();
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/export`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("Content-Type")).toBe("application/x-ndjson");
+
+      const body = await response.text();
+      const lines = body.split("\n").filter((l) => l.trim());
+      expect(lines).toHaveLength(2);
+
+      // Each line is valid JSON with v:1
+      for (const line of lines) {
+        const parsed = JSON.parse(line) as ExportedMemory;
+        expect(parsed.v).toBe(1);
+        expect(parsed.content).toBeDefined();
+      }
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("POST /import with valid NDJSON returns summary", async () => {
+    const server = startHttpServer();
+
+    try {
+      const ndjson = [
+        JSON.stringify({
+          v: 1,
+          id: "imp-1",
+          content: "Imported 1",
+          category: null,
+          scope_id: null,
+          chat_id: null,
+          thread_id: null,
+          task_id: null,
+          metadata_json: null,
+          idempotency_key: null,
+          created_at: "2026-01-01 00:00:00",
+          updated_at: "2026-01-01 00:00:00",
+          last_accessed: "2026-01-01 00:00:00",
+          access_count: 1,
+          strength: 1.0,
+          embedding: null,
+        }),
+        JSON.stringify({
+          v: 1,
+          id: "imp-2",
+          content: "Imported 2",
+          category: null,
+          scope_id: null,
+          chat_id: null,
+          thread_id: null,
+          task_id: null,
+          metadata_json: null,
+          idempotency_key: null,
+          created_at: "2026-01-01 00:00:00",
+          updated_at: "2026-01-01 00:00:00",
+          last_accessed: "2026-01-01 00:00:00",
+          access_count: 1,
+          strength: 1.0,
+          embedding: null,
+        }),
+      ].join("\n");
+
+      const response = await fetch(`http://127.0.0.1:${server.port}/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-ndjson" },
+        body: ndjson,
+      });
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        inserted: number;
+        skippedDuplicate: number;
+        resolved: { localWins: number; remoteWins: number };
+        dry_run: boolean;
+      };
+      expect(body.inserted).toBe(2);
+      expect(body.skippedDuplicate).toBe(0);
+      expect(body.dry_run).toBe(false);
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("POST /import?dry_run=1 returns preview without writing", async () => {
+    const server = startHttpServer();
+
+    try {
+      const ndjson = JSON.stringify({
+        v: 1,
+        id: "dry-1",
+        content: "Dry run memory",
+        category: null,
+        scope_id: null,
+        chat_id: null,
+        thread_id: null,
+        task_id: null,
+        metadata_json: null,
+        idempotency_key: null,
+        created_at: "2026-01-01 00:00:00",
+        updated_at: "2026-01-01 00:00:00",
+        last_accessed: "2026-01-01 00:00:00",
+        access_count: 1,
+        strength: 1.0,
+        embedding: null,
+      });
+
+      const response = await fetch(
+        `http://127.0.0.1:${server.port}/import?dry_run=1`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-ndjson" },
+          body: ndjson,
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        inserted: number;
+        dry_run: boolean;
+      };
+      expect(body.inserted).toBe(1);
+      expect(body.dry_run).toBe(true);
     } finally {
       server.stop();
     }
