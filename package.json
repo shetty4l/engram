@@ -23,7 +23,7 @@
     "prepare": "husky"
   },
   "dependencies": {
-    "@huggingface/transformers": "^3.8.1",
+    "@huggingface/transformers": "^4.0.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@shetty4l/core": "^0.1.30"
   },
