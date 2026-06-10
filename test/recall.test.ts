@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   closeDatabase,
+  getDatabase,
   getMemoryById,
   initDatabase,
   resetDatabase,
@@ -152,7 +153,7 @@ describe("recall tool", () => {
     expect(result.memories[0].content).toBe("Project A memory");
   });
 
-  test("scoped recall includes unscoped (NULL scope_id) memories", async () => {
+  test("scoped recall excludes unscoped (NULL scope_id) memories", async () => {
     process.env.ENGRAM_ENABLE_SCOPES = "1";
 
     await remember({ content: "Legacy unscoped memory" });
@@ -162,9 +163,25 @@ describe("recall tool", () => {
     const result = await recall({ query: "memory", scope_id: "takumi" });
 
     const contents = result.memories.map((m) => m.content);
-    expect(contents).toContain("Legacy unscoped memory");
+    // Strict scope filtering: only exact scope matches are returned.
+    // NULL-scoped (legacy/unscoped) memories no longer leak into scoped queries.
     expect(contents).toContain("Scoped memory for agent");
+    expect(contents).not.toContain("Legacy unscoped memory");
     expect(contents).not.toContain("Other agent memory");
+  });
+
+  test("unscoped recall (no scope_id) returns all memories", async () => {
+    process.env.ENGRAM_ENABLE_SCOPES = "1";
+
+    await remember({ content: "Global memory thing" });
+    await remember({ content: "Project memory thing", scope_id: "proj-x" });
+
+    const result = await recall({ query: "memory thing" });
+
+    const contents = result.memories.map((m) => m.content);
+    // Omitting scope_id returns everything (scoped + unscoped).
+    expect(contents).toContain("Global memory thing");
+    expect(contents).toContain("Project memory thing");
   });
 
   // Semantic search behavior tests
@@ -182,8 +199,16 @@ describe("recall tool", () => {
     });
 
     test("returns no results for completely unrelated query when no embeddings match", async () => {
-      await remember({ content: "TypeScript is great" });
-      await remember({ content: "Python is good" });
+      const a = unwrap(await remember({ content: "TypeScript is great" }));
+      const b = unwrap(await remember({ content: "Python is good" }));
+
+      // Backdate so the recency component of the blended score is negligible,
+      // isolating semantic similarity (which is what this test asserts).
+      getDatabase()
+        .prepare(
+          "UPDATE memories SET created_at = datetime('now', '-365 days') WHERE id IN ($a, $b)",
+        )
+        .run({ $a: a.id, $b: b.id });
 
       // Even with semantic search, very unrelated content should score low
       const result = await recall({ query: "cooking recipes for pasta" });
@@ -228,6 +253,30 @@ describe("recall tool", () => {
       expect(result.memories.length).toBe(2);
       // "automobile" should be semantically similar to "car"
       expect(result.memories[0].content).toContain("automobile");
+    });
+
+    test("recency breaks ties between semantically similar memories", async () => {
+      // Two near-identical memories. Without recency weighting they tie on
+      // cosine similarity and ordering is arbitrary. With recency weighting,
+      // the newer one must rank first.
+      const oldMem = unwrap(
+        await remember({ content: "Session index: project status update" }),
+      );
+      const newMem = unwrap(
+        await remember({ content: "Session index: project status update" }),
+      );
+
+      // Backdate the first memory by 60 days (>4 half-lives).
+      getDatabase()
+        .prepare(
+          "UPDATE memories SET created_at = datetime('now', '-60 days') WHERE id = $id",
+        )
+        .run({ $id: oldMem.id });
+
+      const result = await recall({ query: "session index project status" });
+
+      expect(result.memories.length).toBe(2);
+      expect(result.memories[0].id).toBe(newMem.id);
     });
   });
 });

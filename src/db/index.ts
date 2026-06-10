@@ -312,7 +312,10 @@ function applyMemoryFilters(
   params: Record<string, string | number>,
 ): void {
   if (filters.scope_id) {
-    clauses.push("(scope_id = $scope_id OR scope_id IS NULL)");
+    // Strict scope match. NULL-scoped (legacy/unscoped) memories are NOT
+    // included — they would otherwise leak into every scoped query. Callers
+    // that want unscoped memories should omit scope_id entirely.
+    clauses.push("scope_id = $scope_id");
     params.$scope_id = filters.scope_id;
   }
   if (filters.chat_id) {
