@@ -121,6 +121,27 @@ describe("recall tool", () => {
     expect(result.memories[0].created_at).toBeDefined();
     expect(result.memories[0].access_count).toBeGreaterThanOrEqual(1);
     expect(result.memories[0].relevance).toBeGreaterThan(0);
+    // idempotency_key is part of the shape (null when not set) so callers can
+    // deterministically identify a specific memory (e.g. a HEAD pointer).
+    expect("idempotency_key" in result.memories[0]).toBe(true);
+  });
+
+  test("exposes idempotency_key so callers can identify a specific memory", async () => {
+    process.env.ENGRAM_ENABLE_IDEMPOTENCY = "1";
+    await remember({
+      content: "HEAD pointer content",
+      idempotency_key: "proj:fact:session-index",
+    });
+    await remember({ content: "Some other unrelated memory" });
+
+    const result = await recall({ query: "HEAD pointer content" });
+
+    const head = result.memories.find(
+      (m) => m.idempotency_key === "proj:fact:session-index",
+    );
+    expect(head).toBeDefined();
+    expect(head?.content).toBe("HEAD pointer content");
+    delete process.env.ENGRAM_ENABLE_IDEMPOTENCY;
   });
 
   test("fallback mode is false when query is provided", async () => {
