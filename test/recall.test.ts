@@ -1,4 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import {
   closeDatabase,
   getDatabase,
@@ -6,7 +13,7 @@ import {
   initDatabase,
   resetDatabase,
 } from "../src/db";
-import { resetEmbedder } from "../src/embedding";
+import { preloadEmbedder } from "../src/embedding";
 import { forget } from "../src/tools/forget";
 import { recall } from "../src/tools/recall";
 import { remember } from "../src/tools/remember";
@@ -22,10 +29,17 @@ function unwrap<T>(
 describe("recall tool", () => {
   const originalScopes = process.env.ENGRAM_ENABLE_SCOPES;
 
+  // Load the embedding model once for the whole file. The embedder is an
+  // immutable singleton; resetting it per-test forced a reload on every test,
+  // which hammered the HuggingFace hub and triggered HTTP 429 rate limiting
+  // in CI. Loading once keeps it warm and makes a single network fetch.
+  beforeAll(async () => {
+    await preloadEmbedder();
+  });
+
   beforeEach(() => {
     process.env.ENGRAM_ENABLE_SCOPES = "0";
     resetDatabase();
-    resetEmbedder();
     initDatabase(":memory:");
   });
 

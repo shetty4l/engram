@@ -1,22 +1,33 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import {
   closeDatabase,
   getMemoryById,
   initDatabase,
   resetDatabase,
 } from "../src/db";
-import { resetEmbedder } from "../src/embedding";
+import { preloadEmbedder } from "../src/embedding";
 import { remember } from "../src/tools/remember";
 
 describe("remember tool", () => {
   const originalScopes = process.env.ENGRAM_ENABLE_SCOPES;
   const originalIdempotency = process.env.ENGRAM_ENABLE_IDEMPOTENCY;
 
+  // Load the embedding model once for the whole file (see recall.test.ts).
+  beforeAll(async () => {
+    await preloadEmbedder();
+  });
+
   beforeEach(() => {
     process.env.ENGRAM_ENABLE_SCOPES = "0";
     process.env.ENGRAM_ENABLE_IDEMPOTENCY = "0";
     resetDatabase();
-    resetEmbedder();
     initDatabase(":memory:");
   });
 
