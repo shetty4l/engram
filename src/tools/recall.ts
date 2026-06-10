@@ -29,6 +29,7 @@ export interface RecallMemory {
   content: string;
   category: string | null;
   scope_id: string | null;
+  idempotency_key: string | null;
   strength: number;
   relevance: number;
   created_at: string;
@@ -119,6 +120,7 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
       content: m.content,
       category: m.category,
       scope_id: m.scope_id,
+      idempotency_key: m.idempotency_key,
       strength: decayedStrength,
       relevance: score,
       created_at: m.created_at,
@@ -200,6 +202,7 @@ function recallFTS5(
     content: m.content,
     category: m.category,
     scope_id: m.scope_id,
+    idempotency_key: m.idempotency_key,
     strength: m.decayedStrength,
     relevance: Math.exp(m.rank), // e^rank normalizes BM25
     created_at: m.created_at,
@@ -265,6 +268,7 @@ function recallFallback(
     content: m.content,
     category: m.category,
     scope_id: m.scope_id,
+    idempotency_key: m.idempotency_key,
     strength: m.decayedStrength,
     relevance: m.decayedStrength, // Use decayed strength as relevance for fallback
     created_at: m.created_at,
