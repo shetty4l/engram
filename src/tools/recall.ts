@@ -28,6 +28,7 @@ export interface RecallMemory {
   id: string;
   content: string;
   category: string | null;
+  scope_id: string | null;
   strength: number;
   relevance: number;
   created_at: string;
@@ -84,6 +85,11 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
 
   const queryEmbedding = queryEmbeddingResult.value;
 
+  // Recency-aware ranking config. Among semantically similar memories,
+  // newer ones should win — mirrors how human recall favors recent context.
+  const { recencyWeight, recencyHalfLifeDays } = config.recall;
+  const now = Date.now();
+
   // Compute similarity for all memories with embeddings
   // Apply decay to strength before filtering
   const allDecayed = memoriesWithEmbeddings.map((m) => {
@@ -94,12 +100,27 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
       m.access_count,
       m.strength,
     );
+
+    // Recency score: exponential decay from creation time.
+    // A memory `recencyHalfLifeDays` old scores 0.5; brand new scores ~1.0.
+    const ageDays = (now - new Date(m.created_at).getTime()) / 86_400_000;
+    const recencyScore = Math.pow(
+      0.5,
+      Math.max(ageDays, 0) / recencyHalfLifeDays,
+    );
+
+    // Blend semantic relevance with recency. recencyWeight=0 reproduces
+    // legacy pure-similarity ranking.
+    const score =
+      similarity * (1 - recencyWeight) + recencyScore * recencyWeight;
+
     return {
       id: m.id,
       content: m.content,
       category: m.category,
+      scope_id: m.scope_id,
       strength: decayedStrength,
-      relevance: similarity,
+      relevance: score,
       created_at: m.created_at,
       access_count: m.access_count,
     };
@@ -178,6 +199,7 @@ function recallFTS5(
     id: m.id,
     content: m.content,
     category: m.category,
+    scope_id: m.scope_id,
     strength: m.decayedStrength,
     relevance: Math.exp(m.rank), // e^rank normalizes BM25
     created_at: m.created_at,
@@ -242,6 +264,7 @@ function recallFallback(
     id: m.id,
     content: m.content,
     category: m.category,
+    scope_id: m.scope_id,
     strength: m.decayedStrength,
     relevance: m.decayedStrength, // Use decayed strength as relevance for fallback
     created_at: m.created_at,

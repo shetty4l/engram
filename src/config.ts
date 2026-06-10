@@ -34,6 +34,21 @@ export interface Config {
     /** Strength to set when a memory is accessed */
     accessBoostStrength: number;
   };
+  recall: {
+    /**
+     * How much recency influences ranking, 0..1.
+     * Final score = relevance * (1 - recencyWeight) + recencyScore * recencyWeight.
+     * 0 = pure semantic similarity (legacy behavior).
+     * Higher values bias toward newer memories — useful for breaking ties
+     * between semantically near-identical memories (e.g. session indices).
+     */
+    recencyWeight: number;
+    /**
+     * Half-life in days for the recency score.
+     * A memory this many days old gets a recency score of 0.5.
+     */
+    recencyHalfLifeDays: number;
+  };
   http: {
     port: number;
     host: string;
@@ -41,6 +56,8 @@ export interface Config {
   embedding: {
     model: string;
     cacheDir: string;
+    /** Max time to wait for the model to load before falling back to FTS5. */
+    loadTimeoutMs: number;
   };
   features: {
     scopes: boolean;
@@ -72,10 +89,13 @@ interface ConfigFileSchema {
   dbPath?: string;
   embeddingModel?: string;
   embeddingCacheDir?: string;
+  embeddingLoadTimeoutMs?: number;
   decayRate?: number;
   accessBoostStrength?: number;
   defaultRecallLimit?: number;
   minStrength?: number;
+  recencyWeight?: number;
+  recencyHalfLifeDays?: number;
   scopes?: boolean;
   idempotency?: boolean;
   contextHydration?: boolean;
@@ -86,10 +106,13 @@ const FILE_DEFAULTS: ConfigFileSchema = {
   port: 7749,
   host: "127.0.0.1",
   embeddingModel: "Xenova/bge-small-en-v1.5",
+  embeddingLoadTimeoutMs: 60_000,
   decayRate: 0.95,
   accessBoostStrength: 1.0,
   defaultRecallLimit: 10,
   minStrength: 0.1,
+  recencyWeight: 0.2,
+  recencyHalfLifeDays: 14,
   scopes: true,
   idempotency: true,
   contextHydration: true,
@@ -187,6 +210,18 @@ export function loadConfig(configPath?: string): Result<ConfigLoadResult> {
         fileConfig.accessBoostStrength ?? 1.0,
       ),
     },
+    recall: {
+      recencyWeight: parseFloatEnv(
+        "ENGRAM_RECENCY_WEIGHT",
+        process.env.ENGRAM_RECENCY_WEIGHT,
+        fileConfig.recencyWeight ?? 0.2,
+      ),
+      recencyHalfLifeDays: parseFloatEnv(
+        "ENGRAM_RECENCY_HALF_LIFE_DAYS",
+        process.env.ENGRAM_RECENCY_HALF_LIFE_DAYS,
+        fileConfig.recencyHalfLifeDays ?? 14,
+      ),
+    },
     http: {
       port: parsePortEnv(
         "ENGRAM_HTTP_PORT",
@@ -203,6 +238,11 @@ export function loadConfig(configPath?: string): Result<ConfigLoadResult> {
       cacheDir: fileConfig.embeddingCacheDir
         ? expandPath(fileConfig.embeddingCacheDir)
         : join(dataDir, "models"),
+      loadTimeoutMs: parseFloatEnv(
+        "ENGRAM_EMBEDDING_LOAD_TIMEOUT_MS",
+        process.env.ENGRAM_EMBEDDING_LOAD_TIMEOUT_MS,
+        fileConfig.embeddingLoadTimeoutMs ?? 60_000,
+      ),
     },
     features: {
       scopes:
@@ -267,6 +307,18 @@ function getFallbackConfig(): Config {
         1.0,
       ),
     },
+    recall: {
+      recencyWeight: parseFloatEnv(
+        "ENGRAM_RECENCY_WEIGHT",
+        process.env.ENGRAM_RECENCY_WEIGHT,
+        0.2,
+      ),
+      recencyHalfLifeDays: parseFloatEnv(
+        "ENGRAM_RECENCY_HALF_LIFE_DAYS",
+        process.env.ENGRAM_RECENCY_HALF_LIFE_DAYS,
+        14,
+      ),
+    },
     http: {
       port: parsePortEnv(
         "ENGRAM_HTTP_PORT",
@@ -278,6 +330,11 @@ function getFallbackConfig(): Config {
     embedding: {
       model: process.env.ENGRAM_EMBEDDING_MODEL || "Xenova/bge-small-en-v1.5",
       cacheDir: join(dataDir, "models"),
+      loadTimeoutMs: parseFloatEnv(
+        "ENGRAM_EMBEDDING_LOAD_TIMEOUT_MS",
+        process.env.ENGRAM_EMBEDDING_LOAD_TIMEOUT_MS,
+        60_000,
+      ),
     },
     features: {
       scopes: process.env.ENGRAM_ENABLE_SCOPES !== "0",

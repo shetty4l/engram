@@ -18,6 +18,25 @@ let isInitializing = false;
 let initPromise: Promise<Result<FeatureExtractionPipeline>> | null = null;
 
 /**
+ * Reject if a promise does not settle within `ms`. The underlying promise is
+ * left to settle on its own (we cannot cancel transformers.js mid-load), but
+ * the caller is unblocked so it can fall back instead of hanging forever.
+ */
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  message: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() =>
+    clearTimeout(timer),
+  ) as Promise<T>;
+}
+
+/**
  * Get or initialize the embedding pipeline.
  * Lazy-loads the model on first use.
  * Returns Err on model load failure instead of throwing.
@@ -41,13 +60,21 @@ export async function getEmbedder(): Promise<
     try {
       log(`loading embedding model: ${config.embedding.model}`);
       const start = Date.now();
-      const pipe = await pipeline(
+      const loadTimeoutMs = config.embedding.loadTimeoutMs;
+      const loadPromise = pipeline(
         "feature-extraction",
         config.embedding.model,
         {
           dtype: "q8" as const, // Quantized for smaller size
           cache_dir: config.embedding.cacheDir,
         },
+      );
+      // Bound the load so a stalled network fetch can't hang recall/remember
+      // indefinitely. On timeout we fall back to FTS5 keyword search.
+      const pipe = await withTimeout(
+        loadPromise,
+        loadTimeoutMs,
+        `embedding model load exceeded ${loadTimeoutMs}ms`,
       );
       log(`embedding model loaded in ${Date.now() - start}ms`);
       return ok(pipe as FeatureExtractionPipeline);
