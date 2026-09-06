@@ -184,6 +184,56 @@ function runMigrations(database: Database): void {
     database.exec("ALTER TABLE metrics ADD COLUMN latency_ms REAL");
   }
 
+  // Observability: traffic-class tagging + delivery correlation (2026-09)
+  const metricsColumns: Array<{ name: string; definition: string }> = [
+    { name: "source", definition: "TEXT" },
+    { name: "recall_id", definition: "TEXT" },
+    { name: "memory_ids", definition: "TEXT" },
+  ];
+  for (const column of metricsColumns) {
+    if (!hasColumn(database, "metrics", column.name)) {
+      database.exec(
+        `ALTER TABLE metrics ADD COLUMN ${column.name} ${column.definition}`,
+      );
+    }
+  }
+
+  // Observability: access_count becomes delivered-only; surfaced_count takes
+  // the old "returned by search" meaning. Historical access_count values keep
+  // the old semantics (documented discontinuity, baseline archived off-repo).
+  if (!hasColumn(database, "memories", "surfaced_count")) {
+    database.exec(
+      "ALTER TABLE memories ADD COLUMN surfaced_count INTEGER DEFAULT 0",
+    );
+  }
+
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_metrics_recall_id ON metrics(recall_id);
+    CREATE TABLE IF NOT EXISTS deliveries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      recall_id TEXT NOT NULL,
+      session_id TEXT,
+      source TEXT,
+      memory_id TEXT NOT NULL,
+      chars INTEGER,
+      truncated INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_deliveries_recall_id ON deliveries(recall_id);
+    CREATE INDEX IF NOT EXISTS idx_deliveries_memory_id ON deliveries(memory_id);
+    CREATE INDEX IF NOT EXISTS idx_deliveries_created_at ON deliveries(created_at);
+    CREATE TABLE IF NOT EXISTS judge_audits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      audit_week TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      memory_id TEXT,
+      verdict TEXT NOT NULL,
+      note TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_judge_audits_week ON judge_audits(audit_week);
+  `);
+
   // Index for stats API time-windowed queries on metrics table
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_metrics_event_timestamp
@@ -362,6 +412,108 @@ export function updateMemoryAccess(id: string): void {
   stmt.run({ $id: id, $strength: config.decay.accessBoostStrength });
 }
 
+/**
+ * Record that a memory was returned by recall search WITHOUT confirming it
+ * reached an agent's context. Deliberately does not touch last_accessed or
+ * strength — only delivery (updateMemoryAccess) refreshes decay, so the
+ * working set reflects what agents actually saw.
+ */
+export function updateMemorySurfaced(id: string): void {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    UPDATE memories
+    SET surfaced_count = surfaced_count + 1
+    WHERE id = $id
+  `);
+  stmt.run({ $id: id });
+}
+
+export interface DeliveryRecord {
+  recall_id: string;
+  session_id?: string;
+  source?: string;
+  memory_id: string;
+  chars?: number;
+  truncated?: boolean;
+}
+
+/**
+ * Record confirmed deliveries (memory content entered an agent's context)
+ * and apply the delivery access bump to each memory.
+ */
+export function recordDeliveries(records: DeliveryRecord[]): void {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    INSERT INTO deliveries (recall_id, session_id, source, memory_id, chars, truncated)
+    VALUES ($recall_id, $session_id, $source, $memory_id, $chars, $truncated)
+  `);
+  for (const r of records) {
+    stmt.run({
+      $recall_id: r.recall_id,
+      $session_id: r.session_id ?? null,
+      $source: r.source ?? null,
+      $memory_id: r.memory_id,
+      $chars: r.chars ?? null,
+      $truncated: r.truncated ? 1 : 0,
+    });
+    updateMemoryAccess(r.memory_id);
+  }
+}
+
+export interface JudgeAuditRecord {
+  audit_week: string;
+  session_id: string;
+  memory_id?: string;
+  verdict: string;
+  note?: string;
+}
+
+export function insertJudgeAudits(records: JudgeAuditRecord[]): void {
+  const database = getDatabase();
+  const stmt = database.prepare(`
+    INSERT INTO judge_audits (audit_week, session_id, memory_id, verdict, note)
+    VALUES ($audit_week, $session_id, $memory_id, $verdict, $note)
+  `);
+  for (const r of records) {
+    stmt.run({
+      $audit_week: r.audit_week,
+      $session_id: r.session_id,
+      $memory_id: r.memory_id ?? null,
+      $verdict: r.verdict,
+      $note: r.note ?? null,
+    });
+  }
+}
+
+/**
+ * Delete leaked compaction-bridge memories older than maxAgeHours.
+ * Bridges are meant to live minutes; anything older is a client cleanup
+ * failure. Returns the number of rows deleted.
+ */
+export function deleteExpiredBridgeMemories(maxAgeHours: number = 24): number {
+  const database = getDatabase();
+  const cutoff = `-${maxAgeHours} hours`;
+  // Counted explicitly: stmt.run().changes includes FTS-trigger writes on
+  // shadow tables, which inflates the number.
+  const matching = database
+    .prepare(`
+      SELECT COUNT(*) as n FROM memories
+      WHERE content LIKE '[compaction-bridge]%'
+        AND created_at < datetime('now', $cutoff)
+    `)
+    .get({ $cutoff: cutoff }) as { n: number };
+  if (matching.n > 0) {
+    database
+      .prepare(`
+        DELETE FROM memories
+        WHERE content LIKE '[compaction-bridge]%'
+          AND created_at < datetime('now', $cutoff)
+      `)
+      .run({ $cutoff: cutoff });
+  }
+  return matching.n;
+}
+
 export type DeleteScope =
   | { mode: "any" }
   | { mode: "scoped"; scope_id: string }
@@ -456,19 +608,22 @@ export function searchMemories(
 
 export interface MetricEvent {
   session_id?: string;
-  event: "remember" | "upsert" | "recall" | "forget";
+  event: "remember" | "upsert" | "recall" | "forget" | "delivered";
   memory_id?: string;
   query?: string;
   result_count?: number;
   was_fallback?: boolean;
   latency_ms?: number;
+  source?: string;
+  recall_id?: string;
+  memory_ids?: string[];
 }
 
 export function logMetric(metric: MetricEvent): void {
   const database = getDatabase();
   const stmt = database.prepare(`
-    INSERT INTO metrics (session_id, event, memory_id, query, result_count, was_fallback, latency_ms)
-    VALUES ($session_id, $event, $memory_id, $query, $result_count, $was_fallback, $latency_ms)
+    INSERT INTO metrics (session_id, event, memory_id, query, result_count, was_fallback, latency_ms, source, recall_id, memory_ids)
+    VALUES ($session_id, $event, $memory_id, $query, $result_count, $was_fallback, $latency_ms, $source, $recall_id, $memory_ids)
   `);
 
   stmt.run({
@@ -479,6 +634,9 @@ export function logMetric(metric: MetricEvent): void {
     $result_count: metric.result_count ?? null,
     $was_fallback: metric.was_fallback ? 1 : null,
     $latency_ms: metric.latency_ms ?? null,
+    $source: metric.source ?? null,
+    $recall_id: metric.recall_id ?? null,
+    $memory_ids: metric.memory_ids ? JSON.stringify(metric.memory_ids) : null,
   });
 }
 
@@ -581,6 +739,126 @@ export function getStats(): MemoryStats {
     newest_memory: newest.date,
     total_access_count: accessCount.total ?? 0,
     avg_strength: avgStrength.avg ?? 0,
+  };
+}
+
+export interface CohortRow {
+  month: string;
+  created: number;
+  alive_30d: number;
+}
+
+export interface DeliverySourceRow {
+  source: string;
+  recalls: number;
+  surfaced: number;
+  delivered: number;
+  truncated: number;
+  avg_latency_ms: number;
+}
+
+export interface ObservabilityStats {
+  total_memories: number;
+  working_set_30d: number;
+  dead_tail_90d: number;
+  cohort_survival: CohortRow[];
+  delivery_7d: DeliverySourceRow[];
+  auto_to_deliberate_conversions_7d: number;
+}
+
+/**
+ * Honest-numbers report: corpus health (working set, dead tail, cohort
+ * survival) and per-source delivery efficiency over the last 7 days.
+ */
+export function getObservabilityStats(): ObservabilityStats {
+  const database = getDatabase();
+
+  const total = (
+    database.prepare("SELECT COUNT(*) as n FROM memories").get() as {
+      n: number;
+    }
+  ).n;
+
+  const workingSet = (
+    database
+      .prepare(
+        "SELECT COUNT(*) as n FROM memories WHERE last_accessed >= datetime('now', '-30 days')",
+      )
+      .get() as { n: number }
+  ).n;
+
+  const deadTail = (
+    database
+      .prepare(
+        "SELECT COUNT(*) as n FROM memories WHERE last_accessed < datetime('now', '-90 days')",
+      )
+      .get() as { n: number }
+  ).n;
+
+  const cohorts = database
+    .prepare(`
+      SELECT substr(created_at, 1, 7) as month,
+             COUNT(*) as created,
+             SUM(last_accessed >= datetime('now', '-30 days')) as alive_30d
+      FROM memories
+      GROUP BY month
+      ORDER BY month
+    `)
+    .all() as CohortRow[];
+
+  const deliveryRows = database
+    .prepare(`
+      SELECT coalesce(m.source, '(untagged)') as source,
+             COUNT(*) as recalls,
+             SUM(coalesce(m.result_count, 0)) as surfaced,
+             coalesce((
+               SELECT COUNT(*) FROM deliveries d
+               WHERE d.source = m.source
+                 AND d.created_at >= datetime('now', '-7 days')
+             ), 0) as delivered,
+             coalesce((
+               SELECT COUNT(*) FROM deliveries d
+               WHERE d.source = m.source
+                 AND d.truncated = 1
+                 AND d.created_at >= datetime('now', '-7 days')
+             ), 0) as truncated,
+             round(AVG(coalesce(m.latency_ms, 0)), 1) as avg_latency_ms
+      FROM metrics m
+      WHERE m.event = 'recall'
+        AND m.timestamp >= datetime('now', '-7 days')
+      GROUP BY m.source
+      ORDER BY recalls DESC
+    `)
+    .all() as DeliverySourceRow[];
+
+  // Index→pull conversion: memories surfaced by the auto index that were
+  // later deliberately delivered (same memory, within the window). The
+  // honest measure of whether the per-turn nudge earns real pulls.
+  const conversions = (
+    database
+      .prepare(`
+        SELECT COUNT(DISTINCT d.memory_id) as n
+        FROM deliveries d
+        WHERE d.source = 'deliberate'
+          AND d.created_at >= datetime('now', '-7 days')
+          AND d.memory_id IN (
+            SELECT dm.value
+            FROM metrics m, json_each(m.memory_ids) dm
+            WHERE m.event = 'recall'
+              AND m.source = 'auto'
+              AND m.timestamp >= datetime('now', '-7 days')
+          )
+      `)
+      .get() as { n: number }
+  ).n;
+
+  return {
+    total_memories: total,
+    working_set_30d: workingSet,
+    dead_tail_90d: deadTail,
+    cohort_survival: cohorts,
+    delivery_7d: deliveryRows,
+    auto_to_deliberate_conversions_7d: conversions,
   };
 }
 

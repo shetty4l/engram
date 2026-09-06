@@ -24,7 +24,15 @@ import {
 import { createLogger } from "@shetty4l/core/log";
 import { getCapabilities } from "./capabilities";
 import { getConfig, logFeatureFlags } from "./config";
-import { getStatsForApi, initDatabase } from "./db";
+import {
+  deleteExpiredBridgeMemories,
+  getStatsForApi,
+  initDatabase,
+  insertJudgeAudits,
+  type JudgeAuditRecord,
+  logMetric,
+  recordDeliveries,
+} from "./db";
 import { createMcpServer } from "./mcp-server";
 import {
   exportMemoriesNDJSON,
@@ -36,11 +44,26 @@ import {
   contextHydrate,
 } from "./tools/context-hydrate";
 import { type ForgetInput, forget } from "./tools/forget";
-import { type RecallInput, recall } from "./tools/recall";
+import {
+  RECALL_SOURCES,
+  type RecallInput,
+  type RecallSource,
+  recall,
+} from "./tools/recall";
 import { type RememberInput, remember } from "./tools/remember";
 import { VERSION } from "./version";
 
 const log = createLogger("engram");
+
+/** Delivery feedback payload from injection clients (persona plugin etc). */
+interface DeliveredInput {
+  recall_id: string;
+  session_id?: string;
+  source?: string;
+  memory_ids: string[];
+  chars?: number;
+  truncated?: boolean;
+}
 
 /** Parse JSON body from request, returning a 400 jsonError on failure. */
 async function parseJsonBody<T>(req: Request): Promise<T | Response> {
@@ -78,6 +101,25 @@ export function startHttpServer(): HttpServer {
 
   log(`v${VERSION}: listening on http://${host}:${server.port}`);
   logFeatureFlags();
+
+  // Bridge TTL sweep: compaction-bridge memories are meant to live minutes;
+  // client cleanup failures used to leak them permanently. Skipped in
+  // query-only mode — replicas receive deletions via sync.
+  if (!config.queryOnly) {
+    const sweepBridges = () => {
+      try {
+        const deleted = deleteExpiredBridgeMemories();
+        if (deleted > 0) {
+          log(`bridge sweep: deleted ${deleted} expired bridge memories`);
+        }
+      } catch (err) {
+        log(`bridge sweep failed: ${err}`);
+      }
+    };
+    sweepBridges();
+    const timer = setInterval(sweepBridges, 60 * 60 * 1000);
+    timer.unref?.();
+  }
 
   return server;
 }
@@ -132,8 +174,88 @@ async function routeRequest(req: Request, url: URL): Promise<Response | null> {
       return jsonError(400, "query is required");
     }
 
+    if (
+      body.source !== undefined &&
+      !RECALL_SOURCES.includes(body.source as RecallSource)
+    ) {
+      return jsonError(
+        400,
+        `source must be one of: ${RECALL_SOURCES.join(", ")}`,
+      );
+    }
+
     const result = await recall(body);
     return jsonOk(result);
+  }
+
+  // Delivery feedback: client confirms which recalled memories actually
+  // entered agent context. Allowed in query-only mode — it is telemetry
+  // about reads, not memory content.
+  if (path === "/delivered" && method === "POST") {
+    const bodyOrError = await parseJsonBody<DeliveredInput>(req);
+    if (bodyOrError instanceof Response) return bodyOrError;
+    const body = bodyOrError;
+
+    if (!body.recall_id) {
+      return jsonError(400, "recall_id is required");
+    }
+    if (!Array.isArray(body.memory_ids)) {
+      return jsonError(400, "memory_ids must be an array");
+    }
+
+    const perMemoryChars =
+      body.chars !== undefined && body.memory_ids.length > 0
+        ? Math.round(body.chars / body.memory_ids.length)
+        : undefined;
+
+    recordDeliveries(
+      body.memory_ids.map((memoryId) => ({
+        recall_id: body.recall_id,
+        session_id: body.session_id,
+        source: body.source,
+        memory_id: memoryId,
+        chars: perMemoryChars,
+        truncated: body.truncated,
+      })),
+    );
+
+    logMetric({
+      session_id: body.session_id,
+      event: "delivered",
+      result_count: body.memory_ids.length,
+      source: body.source,
+      recall_id: body.recall_id,
+      memory_ids: body.memory_ids,
+    });
+
+    return jsonOk({ recorded: body.memory_ids.length });
+  }
+
+  // Judge audit ingestion (orchestrator-write-only by convention)
+  if (path === "/judge/audit" && method === "POST") {
+    if (config.queryOnly) {
+      return jsonError(403, "Endpoint disabled in query-only mode");
+    }
+    const bodyOrError = await parseJsonBody<{ audits: JudgeAuditRecord[] }>(
+      req,
+    );
+    if (bodyOrError instanceof Response) return bodyOrError;
+    const body = bodyOrError;
+
+    if (!Array.isArray(body.audits) || body.audits.length === 0) {
+      return jsonError(400, "audits must be a non-empty array");
+    }
+    for (const audit of body.audits) {
+      if (!audit.audit_week || !audit.session_id || !audit.verdict) {
+        return jsonError(
+          400,
+          "each audit requires audit_week, session_id, verdict",
+        );
+      }
+    }
+
+    insertJudgeAudits(body.audits);
+    return jsonOk({ recorded: body.audits.length });
   }
 
   // Forget endpoint

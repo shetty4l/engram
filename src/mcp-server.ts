@@ -281,7 +281,9 @@ export function createMcpServer(): Server {
         if (input.query === undefined) {
           return mcpError("query is required");
         }
-        const result = await recall(input);
+        // MCP callers are agents: their recalls are deliberate by definition,
+        // and the full payload lands in agent context (self-delivered).
+        const result = await recall({ ...input, source: "deliberate" });
         return {
           content: [
             {

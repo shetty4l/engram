@@ -17,7 +17,10 @@ CREATE TABLE IF NOT EXISTS memories (
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now')),
     last_accessed TEXT DEFAULT (datetime('now')),
+    -- access_count counts DELIVERIES (memory actually reached an agent's context);
+    -- surfaced_count counts recall-search hits regardless of delivery.
     access_count INTEGER DEFAULT 1,
+    surfaced_count INTEGER DEFAULT 0,
     
     -- Decay/relevance scoring
     strength REAL DEFAULT 1.0,
@@ -56,17 +59,55 @@ CREATE TABLE IF NOT EXISTS metrics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp TEXT DEFAULT (datetime('now')),
     session_id TEXT,
-    event TEXT NOT NULL,          -- 'remember', 'recall', 'forget'
+    event TEXT NOT NULL,          -- 'remember', 'recall', 'forget', 'delivered'
     memory_id TEXT,               -- for remember events
     query TEXT,                   -- for recall events
     result_count INTEGER,         -- for recall events
     was_fallback INTEGER,         -- for recall events (1 if empty query)
-    latency_ms REAL               -- operation latency in milliseconds
+    latency_ms REAL,              -- operation latency in milliseconds
+    source TEXT,                  -- recall traffic class: deliberate|auto|session-start|bridge|judge
+    recall_id TEXT,               -- correlates a recall with its /delivered feedback
+    memory_ids TEXT               -- JSON array of memory ids surfaced/delivered
 );
 
 -- Index for querying metrics by session
 CREATE INDEX IF NOT EXISTS idx_metrics_session_id ON metrics(session_id);
 CREATE INDEX IF NOT EXISTS idx_metrics_event ON metrics(event);
+-- idx_metrics_recall_id is created in runMigrations: on pre-observability
+-- databases the recall_id column does not exist until migrations add it,
+-- and schema.sql executes first.
+
+-- One row per memory that actually entered an agent's context.
+-- Deliberate/judge recalls self-deliver; auto/session-start recalls are
+-- confirmed later by the client via POST /delivered.
+CREATE TABLE IF NOT EXISTS deliveries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    recall_id TEXT NOT NULL,
+    session_id TEXT,
+    source TEXT,
+    memory_id TEXT NOT NULL,
+    chars INTEGER,
+    truncated INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_deliveries_recall_id ON deliveries(recall_id);
+CREATE INDEX IF NOT EXISTS idx_deliveries_memory_id ON deliveries(memory_id);
+CREATE INDEX IF NOT EXISTS idx_deliveries_created_at ON deliveries(created_at);
+
+-- Weekly judge-audit verdicts (orchestrator-write-only by convention).
+-- memory_id NULL = session-level verdict (rescue_needed / no_rescue_needed).
+CREATE TABLE IF NOT EXISTS judge_audits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_week TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    memory_id TEXT,
+    verdict TEXT NOT NULL,        -- used|ignored|stale_contradicted|pivotal|rescue_needed|no_rescue_needed
+    note TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_judge_audits_week ON judge_audits(audit_week);
 
 -- Idempotency table for safe retries
 CREATE TABLE IF NOT EXISTS idempotency_ledger (

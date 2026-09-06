@@ -8,6 +8,7 @@ export interface CapabilitiesResponse {
     idempotency: boolean;
     context_hydration: boolean;
     work_items: boolean;
+    delivery_feedback: boolean;
   };
   tools: string[];
 }
@@ -30,6 +31,7 @@ export function getCapabilities(version: string): CapabilitiesResponse {
       idempotency: config.features.idempotency,
       context_hydration: config.features.contextHydration,
       work_items: config.features.workItems,
+      delivery_feedback: true,
     },
     tools,
   };

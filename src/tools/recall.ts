@@ -4,13 +4,37 @@ import {
   getAllMemoriesWithEmbeddings,
   logMetric,
   type MemoryFilters,
+  recordDeliveries,
   searchMemories,
-  updateMemoryAccess,
+  updateMemorySurfaced,
 } from "../db";
 import { calculateDecayedStrength } from "../db/decay";
 import { bufferToEmbedding, cosineSimilarity, embed } from "../embedding";
 
 const log = createLogger("engram");
+
+/**
+ * Traffic classes for recall observability.
+ * - deliberate: agent explicitly asked (MCP tool / direct API). Full payload
+ *   reaches the agent, so delivery is recorded immediately.
+ * - judge: offline audit reads. Self-delivered like deliberate.
+ * - auto / session-start / bridge: client-side injection paths. Only
+ *   surfaced_count is bumped here; the client confirms what actually entered
+ *   context via POST /delivered.
+ */
+export const RECALL_SOURCES = [
+  "deliberate",
+  "auto",
+  "session-start",
+  "bridge",
+  "judge",
+] as const;
+export type RecallSource = (typeof RECALL_SOURCES)[number];
+
+const SELF_DELIVERED_SOURCES: ReadonlySet<RecallSource> = new Set([
+  "deliberate",
+  "judge",
+]);
 
 export interface RecallInput {
   query: string;
@@ -22,6 +46,7 @@ export interface RecallInput {
   chat_id?: string;
   thread_id?: string;
   task_id?: string;
+  source?: RecallSource;
 }
 
 export interface RecallMemory {
@@ -37,8 +62,37 @@ export interface RecallMemory {
 }
 
 export interface RecallOutput {
+  recall_id: string;
   memories: RecallMemory[];
   fallback_mode: boolean;
+}
+
+/**
+ * Record surfacing for all returned memories, plus immediate delivery for
+ * self-delivered sources. Injection sources (auto/session-start/bridge) get
+ * their delivery recorded later via POST /delivered.
+ */
+function recordRecallAccess(
+  memories: RecallMemory[],
+  recallId: string,
+  source: RecallSource,
+  sessionId: string | undefined,
+): void {
+  for (const memory of memories) {
+    updateMemorySurfaced(memory.id);
+  }
+  if (SELF_DELIVERED_SOURCES.has(source)) {
+    recordDeliveries(
+      memories.map((m) => ({
+        recall_id: recallId,
+        session_id: sessionId,
+        source,
+        memory_id: m.id,
+        chars: m.content.length,
+        truncated: false,
+      })),
+    );
+  }
 }
 
 /**
@@ -50,6 +104,8 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
   const config = getConfig();
   const limit = input.limit ?? config.memory.defaultRecallLimit;
   const minStrength = input.min_strength ?? config.memory.minStrength;
+  const source: RecallSource = input.source ?? "deliberate";
+  const recallId = crypto.randomUUID();
   const filters: MemoryFilters = config.features.scopes
     ? {
         scope_id: input.scope_id,
@@ -62,7 +118,15 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
   // Empty query falls back to recent memories
   const isFallback = !input.query.trim();
   if (isFallback) {
-    return recallFallback(input, limit, minStrength, filters, startTime);
+    return recallFallback(
+      input,
+      limit,
+      minStrength,
+      filters,
+      startTime,
+      recallId,
+      source,
+    );
   }
 
   // Try semantic search first
@@ -70,7 +134,15 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
 
   if (memoriesWithEmbeddings.length === 0) {
     // No embeddings available, fall back to FTS5
-    return recallFTS5(input, limit, minStrength, filters, startTime);
+    return recallFTS5(
+      input,
+      limit,
+      minStrength,
+      filters,
+      startTime,
+      recallId,
+      source,
+    );
   }
 
   // Generate query embedding
@@ -81,7 +153,15 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
     log(
       `warning: query embedding failed, falling back to FTS5 — ${queryEmbeddingResult.error}`,
     );
-    return recallFTS5(input, limit, minStrength, filters, startTime);
+    return recallFTS5(
+      input,
+      limit,
+      minStrength,
+      filters,
+      startTime,
+      recallId,
+      source,
+    );
   }
 
   const queryEmbedding = queryEmbeddingResult.value;
@@ -134,12 +214,10 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
     .sort((a, b) => b.relevance - a.relevance)
     .slice(0, limit);
 
-  // Update access patterns for returned memories (boosts strength to 1.0)
-  // Non-returned memories are NOT mutated — decay is computed on-the-fly
-  // from last_accessed, so persisting would cause double-decay.
-  for (const memory of scoredMemories) {
-    updateMemoryAccess(memory.id);
-  }
+  // Surfacing never refreshes decay; only delivery does. Non-returned
+  // memories are NOT mutated — decay is computed on-the-fly from
+  // last_accessed, so persisting would cause double-decay.
+  recordRecallAccess(scoredMemories, recallId, source, input.session_id);
 
   // Log metric
   logMetric({
@@ -149,9 +227,13 @@ export async function recall(input: RecallInput): Promise<RecallOutput> {
     result_count: scoredMemories.length,
     was_fallback: false,
     latency_ms: performance.now() - startTime,
+    source,
+    recall_id: recallId,
+    memory_ids: scoredMemories.map((m) => m.id),
   });
 
   return {
+    recall_id: recallId,
     memories: scoredMemories,
     fallback_mode: false,
   };
@@ -166,6 +248,8 @@ function recallFTS5(
   minStrength: number,
   filters: MemoryFilters,
   startTime: number,
+  recallId: string,
+  source: RecallSource,
 ): RecallOutput {
   let results = searchMemories(input.query, limit * 2, filters);
 
@@ -189,12 +273,6 @@ function recallFTS5(
   // Apply limit
   filtered = filtered.slice(0, limit);
 
-  // Update access patterns (boosts strength to 1.0)
-  // Non-returned memories are NOT mutated — decay is ephemeral.
-  for (const memory of filtered) {
-    updateMemoryAccess(memory.id);
-  }
-
   // Transform to output format
   // BM25 returns negative scores (closer to 0 = better match)
   const memories: RecallMemory[] = filtered.map((m) => ({
@@ -209,6 +287,9 @@ function recallFTS5(
     access_count: m.access_count,
   }));
 
+  // Surfacing never refreshes decay; only delivery does.
+  recordRecallAccess(memories, recallId, source, input.session_id);
+
   // Log metric
   logMetric({
     session_id: input.session_id,
@@ -217,9 +298,13 @@ function recallFTS5(
     result_count: memories.length,
     was_fallback: false,
     latency_ms: performance.now() - startTime,
+    source,
+    recall_id: recallId,
+    memory_ids: memories.map((m) => m.id),
   });
 
   return {
+    recall_id: recallId,
     memories,
     fallback_mode: false,
   };
@@ -234,6 +319,8 @@ function recallFallback(
   minStrength: number,
   filters: MemoryFilters,
   startTime: number,
+  recallId: string,
+  source: RecallSource,
 ): RecallOutput {
   let results = searchMemories("", limit * 2, filters);
 
@@ -257,12 +344,6 @@ function recallFallback(
   // Apply limit
   filtered = filtered.slice(0, limit);
 
-  // Update access patterns (boosts strength to 1.0)
-  // Non-returned memories are NOT mutated — decay is ephemeral.
-  for (const memory of filtered) {
-    updateMemoryAccess(memory.id);
-  }
-
   const memories: RecallMemory[] = filtered.map((m) => ({
     id: m.id,
     content: m.content,
@@ -275,6 +356,9 @@ function recallFallback(
     access_count: m.access_count,
   }));
 
+  // Surfacing never refreshes decay; only delivery does.
+  recordRecallAccess(memories, recallId, source, input.session_id);
+
   // Log metric
   logMetric({
     session_id: input.session_id,
@@ -283,9 +367,13 @@ function recallFallback(
     result_count: memories.length,
     was_fallback: true,
     latency_ms: performance.now() - startTime,
+    source,
+    recall_id: recallId,
+    memory_ids: memories.map((m) => m.id),
   });
 
   return {
+    recall_id: recallId,
     memories,
     fallback_mode: true,
   };

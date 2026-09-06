@@ -49,6 +49,7 @@ import {
   getMemoriesBelowStrength,
   getMemoryById,
   getMetricsSummary,
+  getObservabilityStats,
   getRecentMemories,
   getStats,
   initDatabase,
@@ -138,9 +139,10 @@ function withDb(fn: CommandHandler): CommandHandler {
 
 function cmdStats(_args: string[], json: boolean): void {
   const stats = getStats();
+  const obs = getObservabilityStats();
 
   if (json) {
-    console.log(JSON.stringify(stats, null, 2));
+    console.log(JSON.stringify({ ...stats, observability: obs }, null, 2));
     return;
   }
 
@@ -157,6 +159,45 @@ function cmdStats(_args: string[], json: boolean): void {
       const label = cat.category ?? "(uncategorized)";
       console.log(`  ${label.padEnd(15)} ${cat.count}`);
     }
+  }
+
+  console.log("\n=== Corpus Health ===\n");
+  const wsPct = obs.total_memories
+    ? ((obs.working_set_30d / obs.total_memories) * 100).toFixed(0)
+    : "0";
+  const dtPct = obs.total_memories
+    ? ((obs.dead_tail_90d / obs.total_memories) * 100).toFixed(0)
+    : "0";
+  console.log(`Working set (30d):  ${obs.working_set_30d} (${wsPct}%)`);
+  console.log(`Dead tail (>90d):   ${obs.dead_tail_90d} (${dtPct}%)`);
+
+  if (obs.cohort_survival.length > 0) {
+    console.log("\nCohort survival (created month → alive in last 30d):");
+    for (const c of obs.cohort_survival) {
+      const pct = c.created
+        ? ((c.alive_30d / c.created) * 100).toFixed(0)
+        : "0";
+      console.log(
+        `  ${c.month}  ${String(c.created).padStart(5)} created  ${String(c.alive_30d).padStart(5)} alive (${pct}%)`,
+      );
+    }
+  }
+
+  console.log("\n=== Delivery (last 7d) ===\n");
+  if (obs.delivery_7d.length === 0) {
+    console.log("  No recall traffic recorded.");
+  } else {
+    for (const d of obs.delivery_7d) {
+      const efficiency = d.surfaced
+        ? ((d.delivered / d.surfaced) * 100).toFixed(0)
+        : "n/a";
+      console.log(
+        `  ${d.source.padEnd(14)} recalls ${String(d.recalls).padStart(5)}  surfaced ${String(d.surfaced).padStart(6)}  delivered ${String(d.delivered).padStart(6)} (${efficiency}%)  truncated ${d.truncated}  avg ${d.avg_latency_ms}ms`,
+      );
+    }
+    console.log(
+      `\n  Index→pull conversions (auto-surfaced, later deliberately pulled): ${obs.auto_to_deliberate_conversions_7d}`,
+    );
   }
   console.log();
 }
