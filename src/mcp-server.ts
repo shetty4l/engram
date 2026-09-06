@@ -241,13 +241,20 @@ export function createMcpServer(): Server {
     }
 
     return {
-      tools,
+      tools: config.queryOnly
+        ? tools.filter(({ name }) => name !== "remember" && name !== "forget")
+        : tools,
     };
   });
 
   // Handle tool calls
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    const config = getConfig();
+
+    if (config.queryOnly && (name === "remember" || name === "forget")) {
+      return mcpError(`${name} is disabled in query-only mode`);
+    }
 
     switch (name) {
       case "remember": {
@@ -317,7 +324,6 @@ export function createMcpServer(): Server {
       }
 
       case "context_hydrate": {
-        const config = getConfig();
         if (!config.features.contextHydration) {
           return mcpError("context_hydrate is disabled");
         }

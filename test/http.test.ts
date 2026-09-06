@@ -13,12 +13,14 @@ describe("http server", () => {
   const originalHost = process.env.ENGRAM_HTTP_HOST;
   const originalScopes = process.env.ENGRAM_ENABLE_SCOPES;
   const originalContext = process.env.ENGRAM_ENABLE_CONTEXT_HYDRATION;
+  const originalQueryOnly = process.env.ENGRAM_QUERY_ONLY;
 
   beforeEach(() => {
     process.env.ENGRAM_HTTP_PORT = "0";
     process.env.ENGRAM_HTTP_HOST = "127.0.0.1";
     process.env.ENGRAM_ENABLE_SCOPES = "0";
     process.env.ENGRAM_ENABLE_CONTEXT_HYDRATION = "0";
+    process.env.ENGRAM_QUERY_ONLY = "0";
     resetDatabase();
     initDatabase(":memory:");
   });
@@ -49,6 +51,12 @@ describe("http server", () => {
       delete process.env.ENGRAM_ENABLE_CONTEXT_HYDRATION;
     } else {
       process.env.ENGRAM_ENABLE_CONTEXT_HYDRATION = originalContext;
+    }
+
+    if (originalQueryOnly === undefined) {
+      delete process.env.ENGRAM_QUERY_ONLY;
+    } else {
+      process.env.ENGRAM_QUERY_ONLY = originalQueryOnly;
     }
   });
 
@@ -361,6 +369,89 @@ describe("http server", () => {
       expect(toolNames).toContain("recall");
       expect(toolNames).toContain("forget");
       expect(toolNames).toContain("capabilities");
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("query-only mode exposes only query MCP tools", async () => {
+    process.env.ENGRAM_QUERY_ONLY = "1";
+    process.env.ENGRAM_ENABLE_CONTEXT_HYDRATION = "1";
+    const server = startHttpServer();
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: mcpHeaders,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+          params: {},
+        }),
+      });
+      const body = (await response.json()) as {
+        result: { tools: Array<{ name: string }> };
+      };
+      const toolNames = body.result.tools.map((tool) => tool.name);
+
+      expect(toolNames).toEqual(["recall", "capabilities", "context_hydrate"]);
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("query-only mode rejects HTTP publication endpoints", async () => {
+    process.env.ENGRAM_QUERY_ONLY = "1";
+    const server = startHttpServer();
+
+    try {
+      for (const [path, method] of [
+        ["remember", "POST"],
+        ["forget", "POST"],
+        ["import", "POST"],
+        ["export", "GET"],
+      ] as const) {
+        const response = await fetch(
+          `http://127.0.0.1:${server.port}/${path}`,
+          { method },
+        );
+        expect(response.status).toBe(403);
+        expect(await response.json()).toEqual({
+          error: "Endpoint disabled in query-only mode",
+        });
+      }
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("query-only mode rejects guessed mutation tool calls", async () => {
+    process.env.ENGRAM_QUERY_ONLY = "1";
+    const server = startHttpServer();
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: mcpHeaders,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: {
+            name: "remember",
+            arguments: { content: "must not be stored" },
+          },
+        }),
+      });
+      const body = (await response.json()) as {
+        result: { isError: boolean; content: Array<{ text: string }> };
+      };
+
+      expect(body.result.isError).toBe(true);
+      expect(body.result.content[0]?.text).toBe(
+        "remember is disabled in query-only mode",
+      );
     } finally {
       server.stop();
     }

@@ -85,6 +85,17 @@ export function startHttpServer(): HttpServer {
 async function routeRequest(req: Request, url: URL): Promise<Response | null> {
   const path = url.pathname;
   const method = req.method;
+  const config = getConfig();
+
+  if (
+    config.queryOnly &&
+    ((path === "/remember" && method === "POST") ||
+      (path === "/forget" && method === "POST") ||
+      (path === "/import" && method === "POST") ||
+      (path === "/export" && method === "GET"))
+  ) {
+    return jsonError(403, "Endpoint disabled in query-only mode");
+  }
 
   if (path === "/capabilities" && method === "GET") {
     return jsonOk(getCapabilities(VERSION));
@@ -144,8 +155,7 @@ async function routeRequest(req: Request, url: URL): Promise<Response | null> {
 
   // Context hydrate endpoint
   if (path === "/context/hydrate" && method === "POST") {
-    const featureConfig = getConfig();
-    if (!featureConfig.features.contextHydration) {
+    if (!config.features.contextHydration) {
       return jsonError(403, "context hydration is disabled");
     }
 

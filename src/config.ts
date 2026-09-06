@@ -21,6 +21,7 @@ const log = createLogger("engram");
 // --- Types ---
 
 export interface Config {
+  queryOnly: boolean;
   database: {
     path: string;
   };
@@ -83,6 +84,7 @@ export interface ConfigLoadResult {
  * loadJsonConfig merges this onto defaults, then env vars override.
  */
 interface ConfigFileSchema {
+  queryOnly?: boolean;
   port?: number;
   host?: string;
   dataDir?: string;
@@ -103,6 +105,7 @@ interface ConfigFileSchema {
 }
 
 const FILE_DEFAULTS: ConfigFileSchema = {
+  queryOnly: false,
   port: 7749,
   host: "127.0.0.1",
   embeddingModel: "Xenova/bge-small-en-v1.5",
@@ -185,6 +188,10 @@ export function loadConfig(configPath?: string): Result<ConfigLoadResult> {
   // Build the full Config, starting from file values (which include defaults),
   // then applying env var overrides on top.
   const config: Config = {
+    queryOnly:
+      process.env.ENGRAM_QUERY_ONLY !== undefined
+        ? process.env.ENGRAM_QUERY_ONLY !== "0"
+        : (fileConfig.queryOnly ?? false),
     database: {
       path: process.env.ENGRAM_DB_PATH
         ? expandPath(process.env.ENGRAM_DB_PATH)
@@ -289,6 +296,9 @@ export function getConfig(): Config {
 function getFallbackConfig(): Config {
   const dataDir = getDataDir("engram");
   return {
+    queryOnly:
+      process.env.ENGRAM_QUERY_ONLY !== undefined &&
+      process.env.ENGRAM_QUERY_ONLY !== "0",
     database: {
       path: process.env.ENGRAM_DB_PATH
         ? expandPath(process.env.ENGRAM_DB_PATH)

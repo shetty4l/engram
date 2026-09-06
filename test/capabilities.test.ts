@@ -14,12 +14,14 @@ describe("capabilities and context hydration", () => {
   const originalIdempotency = process.env.ENGRAM_ENABLE_IDEMPOTENCY;
   const originalContext = process.env.ENGRAM_ENABLE_CONTEXT_HYDRATION;
   const originalWorkItems = process.env.ENGRAM_ENABLE_WORK_ITEMS;
+  const originalQueryOnly = process.env.ENGRAM_QUERY_ONLY;
 
   beforeEach(() => {
     process.env.ENGRAM_ENABLE_SCOPES = "0";
     process.env.ENGRAM_ENABLE_IDEMPOTENCY = "0";
     process.env.ENGRAM_ENABLE_CONTEXT_HYDRATION = "0";
     process.env.ENGRAM_ENABLE_WORK_ITEMS = "0";
+    process.env.ENGRAM_QUERY_ONLY = "0";
     resetDatabase();
     resetEmbedder();
     initDatabase(":memory:");
@@ -51,6 +53,12 @@ describe("capabilities and context hydration", () => {
     } else {
       process.env.ENGRAM_ENABLE_WORK_ITEMS = originalWorkItems;
     }
+
+    if (originalQueryOnly === undefined) {
+      delete process.env.ENGRAM_QUERY_ONLY;
+    } else {
+      process.env.ENGRAM_QUERY_ONLY = originalQueryOnly;
+    }
   });
 
   test("returns feature flags through capabilities", () => {
@@ -70,6 +78,15 @@ describe("capabilities and context hydration", () => {
     const caps = getCapabilities("0.1.0");
     expect(caps.features.context_hydration).toBe(false);
     expect(caps.tools).not.toContain("context_hydrate");
+  });
+
+  test("reports query-only mode and hides mutation tools", () => {
+    process.env.ENGRAM_QUERY_ONLY = "1";
+
+    const caps = getCapabilities("0.1.0");
+
+    expect(caps.features.query_only).toBe(true);
+    expect(caps.tools).toEqual(["recall", "capabilities"]);
   });
 
   test("hydrates context from recall fallback path", async () => {
