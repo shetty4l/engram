@@ -24,6 +24,15 @@ import { type RecallInput, recall } from "./tools/recall";
 import { type RememberInput, remember } from "./tools/remember";
 import { VERSION } from "./version";
 
+const CATEGORIES = [
+  "decision",
+  "pattern",
+  "fact",
+  "preference",
+  "insight",
+  "miss",
+];
+
 /** Return an MCP error response (isError: true) for validation failures. */
 function mcpError(message: string) {
   return {
@@ -63,9 +72,8 @@ export function createMcpServer(): Server {
             },
             category: {
               type: "string",
-              description:
-                "Optional category: decision, pattern, fact, preference, insight",
-              enum: ["decision", "pattern", "fact", "preference", "insight"],
+              description: `Optional category: ${CATEGORIES.join(", ")}`,
+              enum: CATEGORIES,
             },
             session_id: {
               type: "string",
@@ -124,7 +132,7 @@ export function createMcpServer(): Server {
             category: {
               type: "string",
               description: "Filter by category",
-              enum: ["decision", "pattern", "fact", "preference", "insight"],
+              enum: CATEGORIES,
             },
             min_strength: {
               type: "number",
@@ -209,7 +217,7 @@ export function createMcpServer(): Server {
             category: {
               type: "string",
               description: "Optional category filter",
-              enum: ["decision", "pattern", "fact", "preference", "insight"],
+              enum: CATEGORIES,
             },
             min_strength: {
               type: "number",
