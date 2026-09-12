@@ -58,6 +58,7 @@ import {
   updateMemoryStrength,
 } from "./db";
 import { calculateDecayedStrength, daysSince } from "./db/decay";
+import { getFreshness } from "./freshness";
 import { startHttpServer } from "./http";
 import {
   exportMemoriesNDJSON,
@@ -140,9 +141,12 @@ function withDb(fn: CommandHandler): CommandHandler {
 function cmdStats(_args: string[], json: boolean): void {
   const stats = getStats();
   const obs = getObservabilityStats();
+  const freshness = getFreshness();
 
   if (json) {
-    console.log(JSON.stringify({ ...stats, observability: obs }, null, 2));
+    console.log(
+      JSON.stringify({ ...stats, observability: obs, ...freshness }, null, 2),
+    );
     return;
   }
 
@@ -199,6 +203,19 @@ function cmdStats(_args: string[], json: boolean): void {
       `\n  Index→pull conversions (auto-surfaced, later deliberately pulled): ${obs.auto_to_deliberate_conversions_7d}`,
     );
   }
+
+  console.log("\n=== Freshness ===\n");
+  const { sync, judge } = freshness;
+  if (sync === null) {
+    console.log("Sync:               not configured on this node");
+  } else {
+    console.log(
+      `Sync:               ${sync.stale ? "STALE" : "fresh"}, last success ${sync.last_success_at ?? "never"}, ${sync.open_conflicts} open conflicts`,
+    );
+  }
+  console.log(
+    `Judge:              last audit ${judge.last_audit_week ?? "none"}${judge.missing_current_week ? ", MISSING for the current week" : ""}`,
+  );
   console.log();
 }
 

@@ -18,6 +18,7 @@ import {
   corsHeaders,
   createServer,
   type HttpServer,
+  healthResponse,
   jsonError,
   jsonOk,
 } from "@shetty4l/core/http";
@@ -33,6 +34,7 @@ import {
   logMetric,
   recordDeliveries,
 } from "./db";
+import { getFreshness, healthStatus } from "./freshness";
 import { createMcpServer } from "./mcp-server";
 import {
   exportMemoriesNDJSON,
@@ -86,6 +88,13 @@ export function startHttpServer(): HttpServer {
     port,
     host,
     version: VERSION,
+    onHealth: (version, startTime) => {
+      const freshness = getFreshness();
+      return healthResponse(version, startTime, {
+        ...freshness,
+        status: healthStatus(freshness),
+      });
+    },
     onRequest: async (req: Request, url: URL) => {
       const start = performance.now();
       const response = await routeRequest(req, url);
